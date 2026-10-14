@@ -7,9 +7,7 @@ Building an agentic framework capable of autonomously solving coding challenges 
 
 Autonomous reasoning, code generation, and execution.
 
-
 ## Description
-
 
 ### System architecture
 
@@ -21,9 +19,37 @@ Autonomous reasoning, code generation, and execution.
 
 ### Benchmark results and analysis
 
-* SWE-bench (Software Engineering Benchmark) 
+#### MBPP (Mostly Basic Python Problems) benchmark
+
+#### SWE-bench (Software Engineering Benchmark) 
 
 ## Instructions
+
+###  Requirement
+
+Docker, uv and deno must be installed in advance.
+
+Docker install - https://docs.docker.com/engine/install/
+
+Install uv: 
+```
+pip install uv
+# or
+curl -LsSf https://astral.sh/uv/install.sh | sh
+# check 
+uv --version
+```
+
+Install deno:
+```
+curl -fsSL https://deno.land/install.sh | sh
+```
+
+
+
+
+
+
 
 ## Resources
 - MBPP (Mostly Basic Python Problems) benchmark:
