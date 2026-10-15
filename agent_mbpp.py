@@ -3,6 +3,7 @@ import time
 from pathlib import Path
 from typing import Annotated
 import typer
+from src.llm_connector import ProviderConfig, LLMConnector
 # import fire
 
 # from src.config_model import AgConfig
@@ -51,6 +52,24 @@ def main(
             help="Provider API URL."
         )
     ],
+    provider_api_key: Annotated[
+        list[str],
+        typer.Option(
+            "--provider-api-key",
+            help="Provider API KEY.",
+        )
+    ] = [],
+    provider_api_keys_file: Annotated[
+        Path | None,
+        typer.Option(
+            "--provider-api-keys-file",
+            exists=True,
+            file_okay=True,
+            dir_okay=False,
+            readable=True,
+            help="Path to JSON file containing API Keys."
+        )
+    ] = None,
 ):
 
     typer.echo("-"*20)
@@ -58,12 +77,54 @@ def main(
     typer.echo(f"📂 Task file: {task_file}")
     typer.echo(f"📥 Output file: {output}")
     typer.echo(f"🤖 Model name: {model_name}")
-    typer.echo(f"🌐 Provider: {provider_url}")
+    typer.echo(f"🌐 Provider URL: {provider_url}")
     typer.echo("-"*20)
+
+    if not provider_api_key:
+        if provider_api_keys_file is not None:
+            print(f"Reading API keys from file: {provider_api_keys_file}")
+
+        typer.secho("Error: Missing API Key!"
+                    , fg=typer.colors.RED, err=True)
+        typer.secho("Provide --provider-api-key  or --provider-api-keys-file \n"
+                    "For more information run: \n" + sys.argv[0] + " --help \n"
+                    , err=True)
+        raise typer.Exit(code=1)
+    
+    print(provider_api_keys_file)
 
     # Record start time
     start_time = time.perf_counter()
     typer.echo("🚀 Start...")
+    # -----------
+
+    provider = ProviderConfig(
+        name="test",
+        base_url=provider_url,
+        model=model_name,
+        api_keys=provider_api_key
+    )
+
+    print(provider)
+    print("Keys:", provider.api_keys)
+
+    # llm = LLMConnector(provider)
+
+    # response = llm.chat(
+    #     [
+    #         {
+    #             "role": "system",
+    #             "content": "You are a Python coding assistant.",
+    #         },
+    #         {
+    #             "role": "user",
+    #             "content": "Write a function that adds two numbers.",
+    #         },
+    #     ],
+    #     temperature=0,
+    # )
+
+    # print(response.choices[0].message.content)
 
     # -----------
     typer.echo("✅ Готово!")
