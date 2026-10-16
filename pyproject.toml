@@ -11,6 +11,7 @@ dependencies = [
 	"pydantic-settings",
 	"flake8>=7.0",
 	"mypy>=1.0",
+	"dotenv",
 	"typer",
 	"deno",
 	"openai",

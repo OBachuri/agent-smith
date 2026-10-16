@@ -1,9 +1,13 @@
 import sys
 import time
+import os
+import json
+from dotenv import load_dotenv, dotenv_values
 from pathlib import Path
 from typing import Annotated
 import typer
 from src.llm_connector import ProviderConfig, LLMConnector
+
 # import fire
 
 # from src.config_model import AgConfig
@@ -67,7 +71,8 @@ def main(
             file_okay=True,
             dir_okay=False,
             readable=True,
-            help="Path to JSON file containing API Keys."
+            help=("Path to .env file containing API Keys"
+                  " (LLM_API_KEYS='[\"key_1\", \"key_2\"]').")
         )
     ] = None,
 ):
@@ -82,52 +87,95 @@ def main(
 
     if not provider_api_key:
         if provider_api_keys_file is not None:
-            print(f"Reading API keys from file: {provider_api_keys_file}")
+            typer.echo(f"Reading API keys from file: {provider_api_keys_file}")
+            # 1. Parse the file into a dictionary
+            env_dict = dotenv_values(provider_api_keys_file)
+            if not env_dict:
+                typer.secho("Error: Failed to parse .env file."
+                            " Check for syntax errors!",
+                            fg=typer.colors.RED, err=True)
+            elif not ("LLM_API_KEYS" in env_dict):
+                typer.secho(
+                    "Error: Failed to find variable LLM_API_KEYS"
+                    " in .env file!",
+                    fg=typer.colors.RED, err=True)
+            else:
+                load_dotenv(provider_api_keys_file, override=True)
+        else:
+            load_dotenv()
+        raw_keys = os.getenv("LLM_API_KEYS", "")
+        if raw_keys.startswith("[") and raw_keys.endswith("]"):
+            # If it looks like a JSON array, decode it and convert to a tuple
+            try:
+                provider_api_key: tuple[str, ...] = tuple(json.loads(raw_keys))
+            except Exception as ex:
+                typer.secho(
+                    "Error: Wrong value LLM_API_KEYS!"
+                    f"{ex}",
+                    fg=typer.colors.RED, err=True)
+                typer.secho(
+                    "(Example: LLM_API_KEYS='[\"key_1\","
+                    " \"key_2\", \"key_3\"]' "
+                    "or LLM_API_KEYS=my_only_one_key) \n",
+                    err=True)
+        elif raw_keys:
+            # If it is just a single string key,
+            # wrap it in a single-element tuple
+            provider_api_key: tuple[str, ...] = (raw_keys,)
 
-        typer.secho("Error: Missing API Key!"
-                    , fg=typer.colors.RED, err=True)
-        typer.secho("Provide --provider-api-key  or --provider-api-keys-file \n"
-                    "For more information run: \n" + sys.argv[0] + " --help \n"
-                    , err=True)
+    if not provider_api_key:
+        typer.secho("Error: Missing API Key!",
+                    fg=typer.colors.RED, err=True)
+        typer.secho(
+            "Provide --provider-api-key  or --provider-api-keys-file \n"
+            "For more information run: \n" + sys.argv[0] + " --help \n",
+            err=True)
         raise typer.Exit(code=1)
-    
-    print(provider_api_keys_file)
+
+    provider = ProviderConfig(
+        name=os.getenv("LLM_PROVIDER_NAME", "Provider 1"),
+        base_url=provider_url,
+        model=model_name,
+        api_keys=provider_api_key
+    )
+
+    print("Prvider param:", provider)
+    # print("Keys:", provider.api_keys)
 
     # Record start time
     start_time = time.perf_counter()
     typer.echo("🚀 Start...")
     # -----------
 
-    provider = ProviderConfig(
-        name="test",
-        base_url=provider_url,
-        model=model_name,
-        api_keys=provider_api_key
+
+    llm = LLMConnector(provider)
+
+    response = llm.chat(
+        [
+            {
+                "role": "system",
+                "content": "You are a Python coding assistant.",
+            },
+            {
+                "role": "user",
+                "content": "Write a function that adds two numbers.",
+            },
+        ],
+        temperature=0,
     )
 
-    print(provider)
-    print("Keys:", provider.api_keys)
+    usage = response.usage
+    if usage is not None:
+        print("Model used:", response.model)
+        print("Input tokens:", usage.prompt_tokens)
+        print("Output tokens:", usage.completion_tokens)
+        print("Total tokens:", usage.total_tokens)
+        print("-"*20)
 
-    # llm = LLMConnector(provider)
-
-    # response = llm.chat(
-    #     [
-    #         {
-    #             "role": "system",
-    #             "content": "You are a Python coding assistant.",
-    #         },
-    #         {
-    #             "role": "user",
-    #             "content": "Write a function that adds two numbers.",
-    #         },
-    #     ],
-    #     temperature=0,
-    # )
-
-    # print(response.choices[0].message.content)
+    print(response.choices[0].message.content)
 
     # -----------
-    typer.echo("✅ Готово!")
+    typer.echo("✅ Done!")
 
     end_time = time.perf_counter()
     # Calculate duration

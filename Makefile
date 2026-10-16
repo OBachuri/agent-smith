@@ -39,7 +39,7 @@ run:
 		--output cache/mbpp_solution.json \
 		--model-name "openrouter/free" \
 		--provider-url "https://openrouter.ai/api/v1" \
-		--provider-api-keys-file "cache/mbpp_task.json" 
+#		--provider-api-keys-file "cache/mbpp_task.json" 
 # 		--provider-api-key "1 zsdfsd" \
 # 		--provider-api-key "2 zsdfsd"
 
