@@ -1,9 +1,31 @@
 from openai import APIConnectionError, APIStatusError, APITimeoutError, OpenAI
+from openai.types.chat import ChatCompletionMessageParam
+
 from threading import Lock
+# from dataclasses import dataclass
+# from collections.abc import Sequence
+from pydantic import BaseModel, Field, field_validator
+from typing import Any
 
 
 class LLMError(RuntimeError):
     """All configured API keys failed."""
+
+
+# @dataclass(frozen=True)
+class ProviderConfig(BaseModel):
+    name: str = "test"
+    base_url: str = Field(min_length=3)
+    model: str = Field(min_length=1)
+    api_keys: tuple[str, ...] = Field(repr=False)
+
+    @field_validator("api_keys", mode="before")
+    @classmethod
+    def fix_api_keys(cls, value: Any) -> tuple[str, ...]:
+        if isinstance(value, str):
+            return (value,)
+        else:
+            return tuple(value)
 
 
 class LLMConnector:
@@ -43,6 +65,45 @@ class LLMConnector:
             }
 
         return False
+
+    def _next_start_index(self) -> int:
+        """Round-robin starting point for requests."""
+        with self._lock:
+            index = self._index
+            self._index = (self._index + 1) % len(self._clients)
+            return index
+
+    def chat(
+        self,
+        messages: list[ChatCompletionMessageParam],
+        *,
+        model: str | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        start = self._next_start_index()
+        last_error: Exception | None = None
+
+        for offset in range(len(self._clients)):
+            client = self._clients[
+                (start + offset) % len(self._clients)
+            ]
+
+            try:
+                return client.chat.completions.create(
+                    model=model or self.config.model,
+                    messages=messages,
+                    **kwargs,
+                )
+            except Exception as exc:
+                last_error = exc
+
+                if not self._should_retry(exc):
+                    raise
+
+        raise LLMError(
+            f"All {len(self._clients)} API keys failed "
+            f"for provider {self.config.name}"
+        ) from last_error
 
 
 # class LLMConnector:
