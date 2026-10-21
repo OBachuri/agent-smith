@@ -42,6 +42,9 @@ run:
 #		--provider-api-keys-file "cache/mbpp_task.json" 
 # 		--provider-api-key "1 zsdfsd" \
 # 		--provider-api-key "2 zsdfsd"
+# 
+#		--model-name "openrouter/free" "google/gemma-4-31b-it:free" \
+#		--model-name "google/gemini-3.8-flash" not free\
 
 
 debug:

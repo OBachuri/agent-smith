@@ -57,10 +57,11 @@ curl -fsSL https://deno.land/install.sh | sh
 	- https://github.com/google-research/google-research/tree/master/mbpp
 	- https://huggingface.co/datasets/google-research-datasets/mbpp
 - SWE-bench https://www.swebench.com/original.html
+- MCP Server/Client architecture https://modelcontextprotocol.io/docs/2026-07-28/learn/architecture 
 
 ### AI Usage
 
-Tools Used: ChatGPT (GPT-5, GPT-6)
+Tools Used: ChatGPT (GPT-5, GPT-6, Gemini 2.5 and 3.0)
 
 AI was used to conceptual understanding and to structuring this README to meet subject requirements.
 

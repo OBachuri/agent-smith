@@ -104,6 +104,8 @@ def main(
         else:
             load_dotenv()
         raw_keys = os.getenv("LLM_API_KEYS", "")
+        if not raw_keys:
+            raw_keys = os.getenv("OPENROUTER_API_KEY", "") 
         if raw_keys.startswith("[") and raw_keys.endswith("]"):
             # If it looks like a JSON array, decode it and convert to a tuple
             try:
@@ -146,7 +148,6 @@ def main(
     start_time = time.perf_counter()
     typer.echo("🚀 Start...")
     # -----------
-
 
     llm = LLMConnector(provider)
 

@@ -15,6 +15,7 @@ dependencies = [
 	"typer",
 	"deno",
 	"openai",
+	"fastmcp",
 #	"transformers>=4.40.0",
 #	"sentence_transformers>=5.7.0",
 #	"torch>=2.0.0",
