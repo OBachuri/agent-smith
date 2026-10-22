@@ -87,7 +87,7 @@ fclean: clean
 	@$(RM) .venv
 
 lint:
-	uv run flake8 src/*.py agent_mbpp.py
+	uv run flake8 src/*.py *.py
 	uv run mypy src/ --warn-return-any \
 	--warn-unused-ignores \
 	--ignore-missing-imports \
@@ -96,7 +96,7 @@ lint:
 	--follow-imports=silent
 
 lint-strict: 
-	uv run flake8 src/*.py
+	uv run flake8 src/*.py *.py
 	uv run mypy src/ --strict --follow-imports=silent
 
 

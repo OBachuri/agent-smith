@@ -47,17 +47,17 @@ curl -fsSL https://deno.land/install.sh | sh
 
 
 
-
-
-
-
 ## Resources
 - MBPP (Mostly Basic Python Problems) benchmark:
 	- https://mcpbr.org/mbpp
 	- https://github.com/google-research/google-research/tree/master/mbpp
 	- https://huggingface.co/datasets/google-research-datasets/mbpp
 - SWE-bench https://www.swebench.com/original.html
+
+- Model Context Protocol Python SDK documentation: https://modelcontextprotocol.github.io/python-sdk/
 - MCP Server/Client architecture https://modelcontextprotocol.io/docs/2026-07-28/learn/architecture 
+- OpenAI-compatible chat completions API documentation: https://platform.openai.com/docs/api-reference/chat
+
 
 ### AI Usage
 
