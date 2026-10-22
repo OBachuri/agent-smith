@@ -42,6 +42,9 @@ run:
 #		--provider-api-keys-file "cache/mbpp_task.json" 
 # 		--provider-api-key "1 zsdfsd" \
 # 		--provider-api-key "2 zsdfsd"
+# 
+#		--model-name "openrouter/free" "google/gemma-4-31b-it:free" \
+#		--model-name "google/gemini-3.8-flash" not free\
 
 
 debug:
@@ -84,7 +87,7 @@ fclean: clean
 	@$(RM) .venv
 
 lint:
-	uv run flake8 src/*.py agent_mbpp.py
+	uv run flake8 src/*.py *.py
 	uv run mypy src/ --warn-return-any \
 	--warn-unused-ignores \
 	--ignore-missing-imports \
@@ -93,7 +96,7 @@ lint:
 	--follow-imports=silent
 
 lint-strict: 
-	uv run flake8 src/*.py
+	uv run flake8 src/*.py *.py
 	uv run mypy src/ --strict --follow-imports=silent
 
 

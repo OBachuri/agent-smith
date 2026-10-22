@@ -47,10 +47,6 @@ curl -fsSL https://deno.land/install.sh | sh
 
 
 
-
-
-
-
 ## Resources
 - MBPP (Mostly Basic Python Problems) benchmark:
 	- https://mcpbr.org/mbpp
@@ -58,9 +54,14 @@ curl -fsSL https://deno.land/install.sh | sh
 	- https://huggingface.co/datasets/google-research-datasets/mbpp
 - SWE-bench https://www.swebench.com/original.html
 
+- Model Context Protocol Python SDK documentation: https://modelcontextprotocol.github.io/python-sdk/
+- MCP Server/Client architecture https://modelcontextprotocol.io/docs/2026-07-28/learn/architecture 
+- OpenAI-compatible chat completions API documentation: https://platform.openai.com/docs/api-reference/chat
+
+
 ### AI Usage
 
-Tools Used: ChatGPT (GPT-5, GPT-6)
+Tools Used: ChatGPT (GPT-5, GPT-6, Gemini 2.5 and 3.0)
 
 AI was used to conceptual understanding and to structuring this README to meet subject requirements.
 

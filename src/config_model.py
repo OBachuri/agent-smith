@@ -57,6 +57,8 @@ class SandboxConfig(BaseModel):
     allowed_directories: list[str] = Field(
         default_factory=lambda: ["/testbed", "/tmp/agent"])
     max_execution_time_seconds: int = 30
+    max_memory_mb: int = 512
+    max_output_chars: int = 9000
 
 
 # --- for MBPP and
