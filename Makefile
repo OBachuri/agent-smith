@@ -88,6 +88,11 @@ fclean: clean
 
 lint: flake8 mypy
 
+format:
+	git ls-files -z -- '*.py' | xargs -0 uv --no-config tool run \
+	--from autopep8==2.3.2 autopep8 --ignore-local-config \
+	--global-config /dev/null --max-line-length 79 --in-place
+
 flake8:
 	git ls-files -z -- '*.py' | xargs -0 uv run --frozen flake8
 
@@ -105,6 +110,6 @@ lint-strict: flake8
 	--strict --explicit-package-bases --follow-imports=silent
 
 
-.PHONY: install run debug clean lint lint-strict flake8 mypy fclean runapi check-venv venv
+.PHONY: install run debug clean format lint lint-strict flake8 mypy fclean runapi check-venv venv
 
 #  ln -s ~/goinfre/uv uv
