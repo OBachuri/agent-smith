@@ -78,9 +78,9 @@ jobs:
           python-version: "3.11"
       - name: Install locked dependencies
         run: uv sync --locked
-      - name: Prepare MBPP test image
+      - name: Install offline MBPP runtime assets
         if: matrix.check == 'test'
-        run: docker pull python:3.10-slim
+        run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Run ${{ matrix.check }}
         id: check
         run: make ${{ matrix.check }}

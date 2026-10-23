@@ -1,7 +1,6 @@
-"""MBPP result, container isolation, cleanup, and real MCP transport tests."""
+"""Contract, real Deno isolation, lifecycle, and MCP transport checks."""
 
 import asyncio
-import json
 from pathlib import Path
 import shutil
 import socket
@@ -15,253 +14,270 @@ from unittest.mock import AsyncMock, patch
 from fastmcp import Client
 from fastmcp.client.transports import StdioTransport
 from mcp.types import TextContent
+from pydantic import ValidationError
 
 import mcp_tools_mbpp as mbpp
+from src.config_model import SandboxConfig
+import src.mbpp_executor as executor
+from src.mbpp_executor import MBPPExecutionRequest, MBPPExecutionResult
 
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def decode_result(text: str) -> dict[str, Any]:
-    result: dict[str, Any] = json.loads(text)
-    assert isinstance(result["success"], bool)
-    assert isinstance(result["output"], str)
-    return result
+    return MBPPExecutionResult.model_validate_json(text).model_dump()
 
 
-class UnitTests(unittest.IsolatedAsyncioTestCase):
-    async def test_empty_inputs_do_not_start_docker(self) -> None:
-        with patch.object(mbpp, "_docker", new_callable=AsyncMock) as docker:
-            for code, tests in [("", ["assert True"]), ("pass", []),
+class ContractTests(unittest.IsolatedAsyncioTestCase):
+    async def test_empty_inputs_do_not_launch_runtime(self) -> None:
+        with patch.object(mbpp, "execute_mbpp", new_callable=AsyncMock) as run:
+            for code, tests in [("", ["pass"]), ("pass", []),
                                 ("pass", [" "])]:
                 result = decode_result(await mbpp.run_tests(code, tests))
                 self.assertFalse(result["success"])
-            docker.assert_not_called()
+            run.assert_not_called()
 
-    async def test_missing_docker_is_a_result_not_a_crash(self) -> None:
-        with patch.object(mbpp.shutil, "which", return_value=None):
-            result = decode_result(await mbpp.run_tests("pass", ["pass"]))
-        self.assertFalse(result["success"])
-        self.assertIn("Docker CLI", result["output"])
-
-    async def test_daemon_failure_is_reported(self) -> None:
+    async def test_sandbox_owns_configuration(self) -> None:
+        config = SandboxConfig(max_execution_time_seconds=2,
+                               max_memory_mb=256, max_output_bytes=73)
         with (
-            patch.object(mbpp.shutil, "which", return_value="/bin/docker"),
-            patch.object(mbpp, "_docker", new_callable=AsyncMock) as docker,
+            patch.object(mbpp, "sandbox_config", config),
+            patch.object(mbpp, "execute_mbpp", new_callable=AsyncMock) as run,
         ):
-            docker.side_effect = [(1, "daemon unavailable"),
-                                  (1, "No such container")]
-            result = decode_result(await mbpp.run_tests("pass", ["pass"]))
-        self.assertFalse(result["success"])
-        self.assertIn("daemon unavailable", result["output"])
-        self.assertEqual(docker.call_args.args[0], "rm")
+            run.return_value = MBPPExecutionResult(success=True, output="OK")
+            await mbpp.run_tests("pass", ["pass"])
+        request = run.call_args.args[0]
+        self.assertEqual(request.config.model_dump(), config.model_dump())
+        self.assertEqual(request.code, "pass")
+        self.assertEqual(request.version, 1)
 
-    async def test_cleanup_failure_cannot_report_success(self) -> None:
-        with (
-            patch.object(mbpp.shutil, "which", return_value="/bin/docker"),
-            patch.object(mbpp, "_docker", new_callable=AsyncMock) as docker,
-            patch.object(mbpp, "_execute", new_callable=AsyncMock) as run,
-        ):
-            docker.side_effect = [(0, "container"), (0, "0 false"),
-                                  (1, "permission denied")]
-            run.return_value = ("", True, False)
-            result = decode_result(await mbpp.run_tests("pass", ["pass"]))
-        self.assertFalse(result["success"])
-        self.assertIn("cleanup failed", result["output"])
+    def test_invalid_limits_and_result_types_are_rejected(self) -> None:
+        for field in ("max_execution_time_seconds", "max_memory_mb",
+                      "max_output_bytes"):
+            for value in (0, -1, True, "30"):
+                with self.subTest(field=field, value=value):
+                    with self.assertRaises(ValidationError):
+                        SandboxConfig.model_validate({field: value})
+        with self.assertRaises(ValidationError):
+            MBPPExecutionResult.model_validate(
+                {"success": "true", "output": ""})
+        with self.assertRaises(ValidationError):
+            MBPPExecutionRequest.model_validate({
+                "version": 2, "code": "pass", "test_list": ["pass"],
+                "config": {},
+            })
 
-    async def test_bounded_output_keeps_completion(self) -> None:
-        stream = asyncio.StreamReader()
-        marker = b"\nCOMPLETED\n"
-        stream.feed_data(b"x" * 100_000 + marker)
-        stream.feed_eof()
-        output, completed = await mbpp._read_output(stream, marker)
-        self.assertTrue(completed)
-        self.assertIn("truncated", output)
-        self.assertLess(len(output), mbpp.MAX_OUTPUT_BYTES + 100)
-
-    async def test_completion_can_precede_delayed_stderr(self) -> None:
-        stream = asyncio.StreamReader()
-        marker = b"\nCOMPLETED\n"
-        stream.feed_data(b"x" * 4093 + marker + b"stderr")
-        stream.feed_eof()
-        output, completed = await mbpp._read_output(stream, marker)
-        self.assertTrue(completed)
-        self.assertTrue(output.endswith("stderr"))
-        self.assertNotIn("COMPLETED", output)
+    async def test_missing_runtime_is_reported(self) -> None:
+        with patch.object(executor.shutil, "which", return_value=None):
+            result = await executor.execute_mbpp(MBPPExecutionRequest(
+                code="pass", test_list=["pass"], config=SandboxConfig(),
+            ))
+        self.assertFalse(result.success)
+        self.assertIn("Deno", result.output)
 
 
-class DockerCase(unittest.IsolatedAsyncioTestCase):
+class RuntimeCase(unittest.IsolatedAsyncioTestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        if shutil.which("docker") is None:
-            raise unittest.SkipTest("Docker CLI unavailable")
-        check = subprocess.run(
-            ["docker", "image", "inspect", mbpp.IMAGE],
-            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=10,
-        )
-        if check.returncode:
-            raise unittest.SkipTest(
-                f"Start Docker and run: docker pull {mbpp.IMAGE}"
-            )
-
-    def containers(self) -> set[str]:
-        output = subprocess.check_output(
-            ["docker", "ps", "--all", "--quiet", "--filter",
-             "label=agent-smith.mbpp=true"], text=True, timeout=10,
-        )
-        return set(output.split())
+        if shutil.which("deno") is None:
+            raise RuntimeError("Deno must be on PATH (use uv run make test).")
+        if not (ROOT / "node_modules/pyodide/pyodide.mjs").is_file():
+            raise RuntimeError("Install offline runtime assets: npm ci")
 
     async def asyncSetUp(self) -> None:
-        self.before = self.containers()
-        timeout = patch.object(mbpp, "TIMEOUT_SECONDS", 5)
-        timeout.start()
-        self.addCleanup(timeout.stop)
+        self.config = SandboxConfig(max_execution_time_seconds=2)
+        config = patch.object(mbpp, "sandbox_config", self.config)
+        config.start()
+        self.addCleanup(config.stop)
 
-    async def asyncTearDown(self) -> None:
-        self.assertEqual(self.containers(), self.before,
-                         "MBPP calls leaked a Docker container")
-
-
-class DockerTests(DockerCase):
-    async def test_solution_imports_stdout_and_stderr(self) -> None:
-        result = decode_result(await mbpp.run_tests(
-            "import math, sys\n"
-            "print('stdout')\nprint('stderr', file=sys.stderr)\n"
-            "def root(x): return math.sqrt(x)",
-            ["assert root(9) == 3", "assert root(0) == 0"],
+    async def run_code(
+        self, code: str, tests: list[str] | None = None,
+    ) -> dict[str, Any]:
+        return decode_result(await mbpp.run_tests(
+            code, tests if tests is not None else ["assert True"],
         ))
-        self.assertTrue(result["success"], result["output"])
-        self.assertIn("stdout", result["output"])
-        self.assertIn("stderr", result["output"])
 
-    async def test_failed_assertion_syntax_and_runtime_error(self) -> None:
-        for code, tests, error in [
-            ("def solve(): return 1", ["assert solve() == 2"],
-             "AssertionError"),
-            ("def solve(:", ["assert True"], "SyntaxError"),
-            ("raise ValueError('broken')", ["assert True"], "ValueError"),
-        ]:
-            with self.subTest(error=error):
-                result = decode_result(await mbpp.run_tests(code, tests))
-                self.assertFalse(result["success"])
-                self.assertIn(error, result["output"])
 
-    async def test_premature_zero_exit_cannot_pass(self) -> None:
-        for code in ["raise SystemExit(0)", "import os\nos._exit(0)"]:
-            with self.subTest(code=code):
-                result = decode_result(await mbpp.run_tests(
-                    code, ["assert False, 'must not be skipped'"],
-                ))
-                self.assertFalse(result["success"])
+class RuntimeTests(RuntimeCase):
+    async def test_passing_imports_and_failed_assertion(self) -> None:
+        code = "import math\ndef solve(): return math.factorial(5)"
+        for answer in (0, 120):
+            result = await self.run_code(code, [f"assert solve() == {answer}"])
+            self.assertEqual(result["success"], answer == 120, result)
+            if answer == 0:
+                self.assertIn("AssertionError", result["output"])
 
-    async def test_timeout_returns_partial_output_and_removes_container(
+    async def test_submodule_allowlist_and_custom_import_policy(self) -> None:
+        result = await self.run_code(
+            "import collections.abc\n"
+            "assert isinstance([], collections.abc.Sequence)",
+        )
+        self.assertTrue(result["success"], result)
+        self.config.authorized_imports = ["math"]
+        result = await self.run_code("import re")
+        self.assertFalse(result["success"], result)
+        self.assertIn("Import denied: re", result["output"])
+
+    async def test_syntax_runtime_and_early_exit_are_failures(self) -> None:
+        for code, error in [("def broken(", "SyntaxError"),
+                            ("1 / 0", "ZeroDivisionError"),
+                            ("raise SystemExit(0)", "SystemExit")]:
+            result = await self.run_code(code)
+            self.assertFalse(result["success"], result)
+            self.assertIn(error, result["output"])
+
+    async def test_timeout_preserves_partial_output(self) -> None:
+        self.config.max_execution_time_seconds = 1
+        result = await self.run_code("print('started')\nwhile True: pass")
+        self.assertFalse(result["success"], result)
+        self.assertIn("started", result["output"])
+        self.assertIn("timed out after 1s", result["output"])
+
+    async def test_whole_process_memory_limit_includes_startup(self) -> None:
+        self.config.max_memory_mb = 32
+        result = await self.run_code("pass")
+        self.assertFalse(result["success"], result)
+        self.assertIn("Memory limit exceeded (32 MiB)", result["output"])
+
+    async def test_candidate_memory_exhaustion_is_a_failure(self) -> None:
+        result = await self.run_code("x = bytearray(600 * 1024 * 1024)")
+        self.assertFalse(result["success"], result)
+        self.assertIn("Memory", result["output"])
+
+    async def test_monitor_failure_cannot_leave_unmonitored_execution(
         self,
     ) -> None:
-        with patch.object(mbpp, "TIMEOUT_SECONDS", 1):
-            result = decode_result(await mbpp.run_tests(
-                "print('partial', flush=True)\nwhile True: pass",
-                ["assert True"],
-            ))
-        self.assertFalse(result["success"])
-        self.assertIn("partial", result["output"])
-        self.assertIn("timed out", result["output"])
+        create = asyncio.create_subprocess_exec
 
-    async def test_memory_limit(self) -> None:
-        result = decode_result(await mbpp.run_tests(
-            "allocation = bytearray(512 * 1024 * 1024)", ["assert True"],
-        ))
-        self.assertFalse(result["success"])
-        self.assertIn("Memory limit exceeded", result["output"])
+        async def fail_ps(*args: Any, **kwargs: Any) -> Any:
+            if args[0] == "ps":
+                raise OSError("ps unavailable")
+            return await create(*args, **kwargs)
 
-    async def test_outbound_network_is_blocked(self) -> None:
-        result = decode_result(await mbpp.run_tests(
-            "import socket\n"
-            "socket.create_connection(('1.1.1.1', 80), timeout=1)",
-            ["assert True"],
-        ))
-        self.assertFalse(result["success"])
-        self.assertIn("Error", result["output"])
+        with patch.object(executor.asyncio, "create_subprocess_exec", fail_ps):
+            result = await self.run_code("while True: pass")
+        self.assertFalse(result["success"], result)
+        self.assertIn("Memory monitoring failed", result["output"])
 
-    async def test_no_host_mounts_and_non_root_execution(self) -> None:
-        with tempfile.NamedTemporaryFile() as host_file:
-            code = (
-                "import os\nfrom pathlib import Path\n"
-                f"assert not Path({host_file.name!r}).exists()\n"
-                "assert not Path('/var/run/docker.sock').exists()\n"
-                "assert os.getuid() == 65534\n"
-                "Path('/tmp/scratch').write_text('allowed')"
-            )
-            result = decode_result(await mbpp.run_tests(
-                code, ["assert Path('/tmp/scratch').read_text() == 'allowed'"],
-            ))
-        self.assertTrue(result["success"], result["output"])
-        denied = decode_result(await mbpp.run_tests(
-            "open('/etc/mbpp-test', 'w')", ["assert True"],
-        ))
-        self.assertFalse(denied["success"])
-
-    async def test_output_flood_still_passes(self) -> None:
-        result = decode_result(await mbpp.run_tests(
-            "print('x' * 100_000)", ["assert True"],
-        ))
-        self.assertTrue(result["success"], result["output"])
+    async def test_output_limit_is_bytes_and_diagnostics_fit(self) -> None:
+        self.config.max_output_bytes = 80
+        result = await self.run_code("print('я' * 10000)")
+        self.assertTrue(result["success"], result)
+        self.assertLessEqual(len(result["output"].encode()), 80)
         self.assertIn("truncated", result["output"])
-        self.assertLess(len(result["output"]), mbpp.MAX_OUTPUT_BYTES + 100)
 
-    async def test_concurrent_calls_do_not_share_files(self) -> None:
-        code = ("from pathlib import Path\n"
-                "assert not Path('/tmp/previous').exists()\n"
-                "Path('/tmp/previous').write_text('private')")
-        results = await asyncio.gather(
-            mbpp.run_tests(code, ["assert True"]),
-            mbpp.run_tests(code, ["assert True"]),
+    async def test_imports_restricted_builtins_and_paths(self) -> None:
+        for code, error in [
+            ("import os", "Import denied"),
+            ("import js", "Import denied"),
+            ("eval('1 + 1')", "NameError"),
+            ("open('/etc/passwd')", "File access denied"),
+            ("open('/tmp/agent/../outside', 'w')", "File access denied"),
+        ]:
+            result = await self.run_code(code)
+            self.assertFalse(result["success"], result)
+            self.assertIn(error, result["output"])
+
+    async def test_files_are_virtual_and_fresh_for_each_call(self) -> None:
+        self.config.allowed_directories = ["/scratch"]
+        result = await self.run_code(
+            "with open('/scratch/example', 'w') as f: f.write('hello')",
+            ["assert open('/scratch/example').read() == 'hello'"],
         )
-        self.assertTrue(all(decode_result(r)["success"] for r in results))
+        self.assertTrue(result["success"], result)
+        result = await self.run_code("open('/scratch/example')")
+        self.assertFalse(result["success"], result)
+        self.assertIn("FileNotFoundError", result["output"])
 
-    async def test_cancellation_removes_container(self) -> None:
-        task = asyncio.create_task(mbpp.run_tests(
-            "while True: pass", ["assert True"],
-        ))
-        try:
-            deadline = asyncio.get_running_loop().time() + 5
-            while self.containers() == self.before:
-                if asyncio.get_running_loop().time() > deadline:
-                    self.fail("Test container did not start")
-                await asyncio.sleep(0.05)
-        finally:
-            task.cancel()
-            with self.assertRaises(asyncio.CancelledError):
-                await task
+    async def test_deno_blocks_host_access_even_with_js_import_allowed(
+        self,
+    ) -> None:
+        # Exercise the outer permission boundary, independent of import guards.
+        self.config.authorized_imports.append("js")
+        for operation in [
+            "js.Deno.readTextFileSync('/etc/passwd')",
+            "js.Deno.env.get('HOME')",
+            "js.Deno.Command.new('/bin/sh').spawn()",
+            "js.WebSocket.new('ws://1.1.1.1:80')",
+        ]:
+            result = await self.run_code("import js\n" + operation)
+            self.assertFalse(result["success"], result)
+            self.assertIn("NotCapable", result["output"])
+
+    async def test_concurrent_calls_are_independent(self) -> None:
+        results = await asyncio.gather(*[
+            self.run_code(
+                f"open('/tmp/agent/value', 'w').write('{value}')",
+                [f"assert open('/tmp/agent/value').read() == '{value}'"],
+            ) for value in ("one", "two")
+        ])
+        self.assertTrue(all(result["success"] for result in results), results)
+
+    async def test_cancellation_reaps_the_runtime(self) -> None:
+        create = asyncio.create_subprocess_exec
+        children: list[asyncio.subprocess.Process] = []
+
+        async def record(*args: Any, **kwargs: Any) -> Any:
+            child = await create(*args, **kwargs)
+            if Path(args[0]).name == "deno":
+                children.append(child)
+            return child
+
+        with patch.object(executor.asyncio, "create_subprocess_exec", record):
+            task = asyncio.create_task(self.run_code("while True: pass"))
+            try:
+                while not children:
+                    await asyncio.sleep(0.01)
+                await asyncio.sleep(0.5)
+            finally:
+                task.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await task
+        self.assertIsNotNone(children[0].returncode)
 
 
-class TransportTests(DockerCase):
+class TransportTests(RuntimeCase):
     async def check_client(self, client: Client[Any]) -> None:
         async with client:
             tools = await client.list_tools()
             self.assertEqual([tool.name for tool in tools], ["run_tests"])
-            self.assertEqual(set(tools[0].input_schema["required"]),
+            self.assertEqual(set(tools[0].input_schema["properties"]),
                              {"code", "test_list"})
             self.assertEqual(len(await client.list_resources()), 1)
             self.assertEqual(len(await client.list_prompts()), 1)
             for expected in [False, True]:
-                answer = 42 if expected else 0
                 response = await client.call_tool("run_tests", {
                     "code": "def solve(): return 42",
-                    "test_list": [f"assert solve() == {answer}"],
+                    "test_list": [
+                        f"assert solve() == {42 if expected else 0}"],
                 })
                 self.assertFalse(response.is_error)
                 content = response.content[0]
                 assert isinstance(content, TextContent)
                 result = decode_result(content.text)
-                self.assertEqual(result["success"], expected, result["output"])
+                self.assertEqual(result["success"], expected, result)
 
     async def test_stdio(self) -> None:
-        transport = StdioTransport(
-            command=sys.executable,
-            args=[str(ROOT / "mcp_tools_mbpp.py"), "--timeout-seconds", "5"],
-            cwd=str(ROOT),
-        )
-        await self.check_client(Client(transport))
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json") as config:
+            config.write(SandboxConfig(max_output_bytes=80).model_dump_json())
+            config.flush()
+            transport = StdioTransport(
+                command=sys.executable,
+                args=[str(ROOT / "mcp_tools_mbpp.py"),
+                      "--sandbox-config", config.name], cwd=str(ROOT),
+            )
+            await self.check_client(Client(transport))
+            async with Client(transport) as client:
+                response = await client.call_tool("run_tests", {
+                    "code": "print('x' * 1000)", "test_list": ["assert True"],
+                })
+                content = response.content[0]
+                assert isinstance(content, TextContent)
+                result = decode_result(content.text)
+                self.assertTrue(result["success"], result)
+                self.assertLessEqual(len(result["output"].encode()), 80)
+                self.assertIn("truncated", result["output"])
 
     async def test_streamable_http(self) -> None:
         with socket.socket() as reservation:

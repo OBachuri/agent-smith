@@ -27,7 +27,7 @@ Autonomous reasoning, code generation, and execution.
 
 ###  Requirement
 
-Docker, uv and deno must be installed in advance.
+Install uv, Deno and Node.js/npm for MBPP. Docker is required only for SWE-bench.
 
 Docker install - https://docs.docker.com/engine/install/
 
@@ -47,58 +47,61 @@ curl -fsSL https://deno.land/install.sh | sh
 
 ### MBPP MCP server
 
-Start Docker and pull the candidate execution image once:
+Install the locked Python dependencies and offline Python 3.10 WebAssembly assets:
 
 ```bash
-docker pull python:3.10-slim
 uv sync --locked
+npm ci --ignore-scripts
 ```
 
-Run the server using either MCP transport:
+Node/npm installs the runtime assets. A fresh, permission-restricted Deno process
+executes each candidate; MBPP does not use Docker. Tool calls do not download
+packages or require model API keys or benchmark datasets.
 
 ```bash
 # stdio: the MCP client launches this command
-uv run python mcp_tools_mbpp.py
+uv run python mcp_tools_mbpp.py --sandbox-config src/sandbox_template.json
 
-# Streamable HTTP: connect the MCP client to http://127.0.0.1:8000/mcp
-uv run python mcp_tools_mbpp.py --transport http
+# Streamable HTTP: connect to http://127.0.0.1:8000/mcp
+uv run python mcp_tools_mbpp.py --transport http \
+  --sandbox-config src/sandbox_template.json
 ```
 
-The `run_tests(code: str, test_list: list[str])` tool accepts a candidate
-solution and the public test assertions. Include any required `test_imports`
-in `code`. It returns a JSON string with `success` and `output`; failed
-assertions, syntax errors, memory exhaustion and timeouts return
-`success: false` with diagnostic output. Empty code or test lists are rejected.
-The server also exposes the `agent://mbpp/task` metadata resource and the
-`mbpp_solver` prompt. `final_answer` belongs to the agent sandbox, not this MCP.
+The MCP API remains `run_tests(code: str, test_list: list[str]) -> str`.
+Include any required `test_imports` in `code`. Results are JSON strings containing
+`success` and `output`. The metadata resource `agent://mbpp/task` and the
+`mbpp_solver` prompt are also available. `final_answer` belongs to the agent
+sandbox.
 
-Each call uses a fresh Python 3.10 container with no network, host mounts,
-or host environment variables. It runs as a non-root user with a read-only
-root filesystem, a 16 MiB writable `/tmp`, a 128 MiB memory limit, a 64-process
-limit and one CPU. Execution is limited to 30 seconds, output retained by the
-server to 8 KiB, and the container is removed after the call, including errors
-and cancellation. Truncated output and incomplete execution are reported
-explicitly. The image is never pulled automatically during a tool call.
-The MCP server runs outside the agent sandbox; this container does not replace
-the sandbox's own configurable restrictions.
+Execution policy comes from `SandboxConfig`, loaded once at server startup.
+The defaults are 30 seconds of candidate execution, 512 MiB for the whole Deno
+process and 8192 UTF-8 output bytes. These values are not MCP tool arguments.
+Imports follow `authorized_imports`; `allowed_directories` refers to a fresh,
+in-memory Python filesystem with no host mounts. Deno denies network access,
+subprocesses, host writes and native addons, and revokes bootstrap read/environment
+permissions before running the candidate. Cancellation and timeouts kill and reap
+the runtime process. Failed assertions, exceptions and early exits report failure.
 
-Override the execution limits or HTTP address when needed:
+The runtime supports Linux and macOS. Process RSS is sampled every 20 ms, including
+startup, and execution terminates when the memory limit is exceeded. This is a
+watchdog, not a kernel-enforced hard memory ceiling; short allocation spikes may
+exceed the limit between samples. V8 heap and WebAssembly memory have additional
+caps. Runtime startup has a separate 30-second watchdog; the configured execution
+time begins when the runtime is ready. Output is bounded even on failure or
+truncation.
+
+See the [sandbox contract](docs/mbpp-sandbox-contract.md) for configuration fields,
+request/result models and the sandbox integration handoff. The interactive sandbox
+CLI and agent loop still need their own integration with this executor.
 
 ```bash
-uv run python mcp_tools_mbpp.py --transport http --port 8001 \
-  --timeout-seconds 10 --memory-mb 256
-```
-
-Run the unit, Docker isolation and stdio/HTTP integration tests:
-
-```bash
-make test
+uv run make test
 make lint
 ```
 
-Local Docker tests are skipped if Docker or the image is unavailable. CI pulls
-the image before running them. No model API keys or benchmark datasets are
-needed for these tests.
+Tests require Deno and the installed npm assets; missing runtime dependencies fail
+explicitly. CI installs the assets and runs the real executor and MCP transport
+checks without Docker.
 
 ## Resources
 - MBPP (Mostly Basic Python Problems) benchmark:
@@ -116,7 +119,9 @@ needed for these tests.
 
 Tools Used: ChatGPT (GPT-5, GPT-6, Gemini 2.5 and 3.0)
 
-AI was used to conceptual understanding and to structuring this README to meet subject requirements.
+AI assisted with architecture discussions, README structure, CI configuration,
+MBPP MCP/runtime implementation and tests. Changes were reviewed and exercised
+with automated checks; the moulinette was not modified.
 
 ## License
 
