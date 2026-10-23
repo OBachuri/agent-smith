@@ -86,20 +86,25 @@ fclean: clean
 	@$(RM) .cache
 	@$(RM) .venv
 
-lint:
-	uv run flake8 src/*.py *.py
-	uv run mypy src/ --warn-return-any \
+lint: flake8 mypy
+
+flake8:
+	git ls-files -z -- '*.py' | xargs -0 uv run --frozen flake8
+
+mypy:
+	git ls-files -z -- '*.py' | xargs -0 uv run --frozen mypy --warn-return-any \
 	--warn-unused-ignores \
 	--ignore-missing-imports \
 	--disallow-untyped-defs \
 	--check-untyped-defs \
+	--explicit-package-bases \
 	--follow-imports=silent
 
-lint-strict: 
-	uv run flake8 src/*.py *.py
-	uv run mypy src/ --strict --follow-imports=silent
+lint-strict: flake8
+	git ls-files -z -- '*.py' | xargs -0 uv run --frozen mypy \
+	--strict --explicit-package-bases --follow-imports=silent
 
 
-.PHONY: install run debug clean lint lint-strict fclean runapi check-venv venv
+.PHONY: install run debug clean lint lint-strict flake8 mypy fclean runapi check-venv venv
 
 #  ln -s ~/goinfre/uv uv
