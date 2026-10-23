@@ -16,7 +16,7 @@ jobs:
   format:
     name: Auto-format
     if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: write
@@ -24,7 +24,7 @@ jobs:
       sha: ${{ steps.commit.outputs.sha }}
       changed: ${{ steps.commit.outputs.changed }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           ref: ${{ github.event.pull_request.head.sha }}
       - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
@@ -58,7 +58,7 @@ jobs:
     name: ${{ matrix.check }}
     needs: format
     if: ${{ !cancelled() && (needs.format.result == 'success' || needs.format.result == 'skipped') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read
@@ -68,7 +68,7 @@ jobs:
       matrix:
         check: [flake8, mypy]
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           ref: ${{ needs.format.outputs.sha || github.sha }}
           persist-credentials: false
