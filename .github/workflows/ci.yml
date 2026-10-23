@@ -1,0 +1,97 @@
+name: Python checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: python-checks-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  format:
+    name: Auto-format
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    outputs:
+      sha: ${{ steps.commit.outputs.sha }}
+      changed: ${{ steps.commit.outputs.changed }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          version: "0.13.5"
+          python-version: "3.11"
+      # Do not execute PR-supplied build commands with the write token.
+      - name: Format tracked Python files
+        run: |
+          git ls-files -z -- '*.py' | xargs -0 uv --no-config tool run \
+            --from autopep8==2.3.2 autopep8 --ignore-local-config \
+            --global-config /dev/null --max-line-length 79 --in-place
+      - name: Commit formatting fixes
+        id: commit
+        env:
+          PR_BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          if git diff --quiet -- '*.py'; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            git add --update -- '*.py'
+            git -c user.name='github-actions[bot]' \
+              -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+              commit -m 'style: apply automatic Python formatting'
+            git push origin "HEAD:$PR_BRANCH"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  lint:
+    name: ${{ matrix.check }}
+    needs: format
+    if: ${{ !cancelled() && (needs.format.result == 'success' || needs.format.result == 'skipped') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      statuses: write
+    strategy:
+      fail-fast: false
+      matrix:
+        check: [flake8, mypy]
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ needs.format.outputs.sha || github.sha }}
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          version: "0.13.5"
+          python-version: "3.11"
+      - name: Install locked dependencies
+        run: uv sync --locked
+      - name: Run ${{ matrix.check }}
+        id: check
+        run: make ${{ matrix.check }}
+      # Bot pushes may not start another workflow; report on the commit checked.
+      - name: Report result on formatting commit
+        if: ${{ always() && needs.format.outputs.changed == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CHECK_SHA: ${{ needs.format.outputs.sha }}
+          CHECK_NAME: ${{ matrix.check }}
+          CHECK_STATE: ${{ steps.check.outcome == 'success' && 'success' || 'failure' }}
+        run: |
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$CHECK_SHA" \
+            -f context="$CHECK_NAME" -f state="$CHECK_STATE" \
+            -f description="$CHECK_NAME completed after automatic formatting" \
+            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            --silent

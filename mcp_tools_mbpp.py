@@ -14,7 +14,7 @@ def run_tests(code_on_python: str = "") -> str:
 
 
 @mcp.resource("agent://mbpp/task")
-def task_resource() -> str:
+def task_resource() -> dict[str, str]:
     """Provides application version and support info."""
     return {"version": "1.0.0", "status": "operational"}
 

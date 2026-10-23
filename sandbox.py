@@ -52,7 +52,7 @@ def main(
         "--mcp-server",
         help="URL of the MCP server to connect."
     ),
-):
+) -> None:
     """
     Sandbox CLI - for Agent Smith.
 

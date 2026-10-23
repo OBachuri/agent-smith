@@ -75,7 +75,7 @@ def main(
                   " (LLM_API_KEYS='[\"key_1\", \"key_2\"]').")
         )
     ] = None,
-):
+) -> None:
 
     typer.echo("-"*20)
     typer.echo("Agent Smith CLI (MBPP)")
@@ -85,7 +85,8 @@ def main(
     typer.echo(f"🌐 Provider URL: {provider_url}")
     typer.echo("-"*20)
 
-    if not provider_api_key:
+    api_keys = tuple(provider_api_key)
+    if not api_keys:
         if provider_api_keys_file is not None:
             typer.echo(f"Reading API keys from file: {provider_api_keys_file}")
             # 1. Parse the file into a dictionary
@@ -109,7 +110,7 @@ def main(
         if raw_keys.startswith("[") and raw_keys.endswith("]"):
             # If it looks like a JSON array, decode it and convert to a tuple
             try:
-                provider_api_key: tuple[str, ...] = tuple(json.loads(raw_keys))
+                api_keys = tuple(json.loads(raw_keys))
             except Exception as ex:
                 typer.secho(
                     "Error: Wrong value LLM_API_KEYS!"
@@ -123,9 +124,9 @@ def main(
         elif raw_keys:
             # If it is just a single string key,
             # wrap it in a single-element tuple
-            provider_api_key: tuple[str, ...] = (raw_keys,)
+            api_keys = (raw_keys,)
 
-    if not provider_api_key:
+    if not api_keys:
         typer.secho("Error: Missing API Key!",
                     fg=typer.colors.RED, err=True)
         typer.secho(
@@ -138,7 +139,7 @@ def main(
         name=os.getenv("LLM_PROVIDER_NAME", "Provider 1"),
         base_url=provider_url,
         model=model_name,
-        api_keys=provider_api_key
+        api_keys=api_keys
     )
 
     print("Prvider param:", provider)
