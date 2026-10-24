@@ -47,16 +47,25 @@ curl -fsSL https://deno.land/install.sh | sh
 
 ### MBPP MCP server
 
-Install the locked Python dependencies and offline Python 3.10 WebAssembly assets:
+This server checks a Python solution against the assertions passed to
+`run_tests(code, test_list)`. It runs the solution with Python 3.10.2 through
+Pyodide, a Python interpreter compiled to WebAssembly, inside a Deno process.
+
+Run these commands from the repository root:
 
 ```bash
+# Install the MCP server's Python packages using uv.lock.
 uv sync --locked
+
+# Download the Pyodide interpreter and standard-library files using package-lock.json.
 npm ci --ignore-scripts
 ```
 
-Node/npm installs the runtime assets. A fresh, permission-restricted Deno process
-executes each candidate; MBPP does not use Docker. Tool calls do not download
-packages or require model API keys or benchmark datasets.
+The npm command stores Pyodide in `node_modules/pyodide/`. Each test call starts a
+fresh, permission-restricted Deno process that loads these local files and runs
+the supplied code and assertions. MBPP does not use Docker. Downloads happen
+during installation; test calls need no network access, model API keys or
+benchmark datasets.
 
 ```bash
 # stdio: the MCP client launches this command
