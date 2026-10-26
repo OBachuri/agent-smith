@@ -91,15 +91,44 @@ def _run(request_json: str) -> bool:
     safe_builtins["__import__"] = checked_import
     safe_builtins["open"] = checked_open
     namespace = {"__name__": "__main__", "__builtins__": safe_builtins}
+    stage = "test imports"
+    source = "\n".join(request.get("test_imports", []))
     try:
-        imports = "\n".join(request.get("test_imports", []))
-        if imports:
-            execute(compile_code(imports, "<test imports>", "exec"), namespace)
-        execute(compile_code(request["code"], "<solution>", "exec"), namespace)
+        if source:
+            execute(compile_code(source, "<test imports>", "exec"), namespace)
+        stage, source = "solution", request["code"]
+        execute(compile_code(source, "<solution>", "exec"), namespace)
         for index, test in enumerate(request["test_list"], 1):
+            stage, source = "test %d" % index, test
             execute(compile_code(test, "<test %d>" % index, "exec"), namespace)
-    except BaseException:
-        traceback.print_exc()
+    except BaseException as error:
+        print("Error while executing <%s>:" % stage, file=sys.stderr)
+        sources = {
+            "<solution>": request["code"],
+            "<test imports>": "\n".join(request.get("test_imports", [])),
+        }
+        sources.update({"<test %d>" % index: test
+                        for index, test in enumerate(request["test_list"], 1)})
+        report = traceback.TracebackException.from_exception(error)
+        pending = [report]
+        while pending:
+            entry = pending.pop()
+            frames = []
+            for frame in entry.stack:
+                if frame.filename == "<exec>":
+                    continue
+                lines = sources.get(frame.filename, "").splitlines()
+                line = (lines[frame.lineno - 1] if frame.lineno and
+                        frame.lineno <= len(lines) else frame.line)
+                frames.append(traceback.FrameSummary(
+                    frame.filename, frame.lineno, frame.name,
+                    line=line, lookup_line=False,
+                ))
+            entry.stack = traceback.StackSummary.from_list(frames)
+            pending.extend(related for related in (
+                entry.__cause__, entry.__context__,
+            ) if related is not None)
+        print("".join(report.format()), end="", file=sys.stderr)
         return False
     return True
 

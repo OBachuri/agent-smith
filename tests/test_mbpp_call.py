@@ -159,6 +159,35 @@ class CallTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("SyntaxError", result["output"])
         self.assertIn("<solution>", result["output"])
 
+    async def test_syntax_error_points_to_supplied_assertion(self) -> None:
+        broken = ASSERTION.replace("==", "=")
+        result = await self.call(SOLUTION, [broken])
+        self.assertFalse(result["success"])
+        self.assertIn("Error while executing <test 1>", result["output"])
+        self.assertIn('File "<test 1>", line 1', result["output"])
+        self.assertIn(broken, result["output"])
+        self.assertIn("^", result["output"])
+        self.assertIn("SyntaxError", result["output"])
+        self.assertNotIn("<exec>", result["output"])
+
+    async def test_runtime_error_keeps_solution_lines_and_chained_causes(
+        self,
+    ) -> None:
+        result = await self.call(
+            "def solve():\n    try:\n        1 / 0\n"
+            "    except ZeroDivisionError as error:\n"
+            "        raise ValueError('bad input') from error",
+            ["assert solve() == 1"],
+        )
+        self.assertFalse(result["success"])
+        self.assertIn('File "<solution>", line 3', result["output"])
+        self.assertIn("1 / 0", result["output"])
+        self.assertIn('File "<test 1>", line 1', result["output"])
+        self.assertIn("assert solve() == 1", result["output"])
+        self.assertIn("ZeroDivisionError", result["output"])
+        self.assertIn("ValueError: bad input", result["output"])
+        self.assertNotIn("<exec>", result["output"])
+
     async def test_timeout_and_truncation_are_both_reported(self) -> None:
         with patch.object(mbpp, "sandbox_config", SandboxConfig(
             max_execution_time_seconds=1, max_output_bytes=256,
