@@ -54,14 +54,12 @@ Pyodide, a Python interpreter compiled to WebAssembly, inside a Deno process.
 Run these commands from the repository root:
 
 ```bash
-# Install the MCP server's Python packages using uv.lock.
-uv sync --locked
-
-# Download the Pyodide interpreter and standard-library files using package-lock.json.
-npm ci --ignore-scripts
+# Install Python dependencies and the Pyodide runtime.
+make install
 ```
 
-The npm command stores Pyodide in `node_modules/pyodide/`. Each test call starts a
+`make install` uses `uv.lock` for Python packages and `package-lock.json` for
+Pyodide, which npm stores in `node_modules/pyodide/`. Each test call starts a
 fresh, permission-restricted Deno process that loads these local files and runs
 the supplied code and assertions. MBPP does not use Docker. Downloads happen
 during installation; test calls need no network access, model API keys or
@@ -76,11 +74,35 @@ uv run python mcp_tools_mbpp.py --transport http \
   --sandbox-config src/sandbox_template.json
 ```
 
-The MCP API remains `run_tests(code: str, test_list: list[str]) -> str`.
-Include any required `test_imports` in `code`. Results are JSON strings containing
+The required `run_tests(code, test_list)` call remains supported. An optional
+`test_imports: list[str]` argument accepts the task's import statements. The server
+runs those imports, then the solution, then each assertion in the same isolated
+namespace. Imports follow the configured allowlist. Results are JSON strings with
 `success` and `output`. The metadata resource `agent://mbpp/task` and the
 `mbpp_solver` prompt are also available. `final_answer` belongs to the agent
 sandbox.
+
+For example, from the repository root:
+
+```bash
+uv run fastmcp call mcp_tools_mbpp.py run_tests \
+  code='def similar_elements(a, b): return tuple(set(a) & set(b))' \
+  test_list='["assert set(similar_elements((3, 4, 5, 6), (5, 7, 4, 10))) == {4, 5}"]'
+```
+
+The tool returns `{"success":true,"output":"All 1 tests passed."}`. FastMCP may
+display this string inside its MCP response envelope. For task-supplied imports,
+add an argument such as `test_imports='["import math"]'`; these are execution
+inputs, not imports to run in the host process.
+
+Missing Deno or Pyodide returns `success: false` with a setup error, a statement
+that no code or tests ran, and a recovery command for the server's project
+directory. A partial Pyodide installation lists missing files; restore it with
+`make install`. Assertions, syntax errors and import errors include
+the exception and stage (`<solution>`, `<test imports>` or `<test N>`).
+Timeouts explicitly report partial output. Truncation is reported even when the
+same call also times out; all output, including diagnostics, shares the byte
+budget. The server does not install dependencies during tool calls.
 
 Execution policy comes from `SandboxConfig`, loaded once at server startup.
 The defaults are 30 seconds of candidate execution, 512 MiB for the whole Deno

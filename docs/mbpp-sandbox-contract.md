@@ -16,8 +16,9 @@ uv run python mcp_tools_mbpp.py --sandbox-config src/sandbox_template.json
 ```
 
 The server loads the file once. Restart it to apply changes. Without a file, it
-uses `SandboxConfig` defaults. The `run_tests` schema has only `code` and
-`test_list`; the model cannot change policy through a tool call.
+uses `SandboxConfig` defaults. The `run_tests` schema requires `code` and
+`test_list`, and accepts optional `test_imports` (default `[]`). These are task
+inputs; the model cannot change execution policy through a tool call.
 
 | Field | Meaning | Default |
 | --- | --- | --- |
@@ -41,6 +42,7 @@ The typed execution request serializes as:
   "version": 1,
   "code": "def add(a, b): return a + b",
   "test_list": ["assert add(2, 3) == 5"],
+  "test_imports": [],
   "config": {
     "authorized_imports": ["math", "math.*"],
     "allowed_directories": ["/tmp/agent"],
@@ -65,12 +67,29 @@ calls propagate cancellation after killing and reaping the runtime. Output is
 truncated to the configured byte budget; diagnostics share that budget, so very
 small limits may truncate the diagnostic itself.
 
+The caller forwards imports from the task before making the MCP call:
+
+```python
+task = MBPPTaskInput.model_validate_json(task_path.read_text())
+response = await mcp_client.call_tool("run_tests", {
+    "code": solution_code,
+    "test_list": task.test_list,
+    "test_imports": task.test_imports,
+})
+```
+
+The executor runs the joined import statements as `<test imports>`, then the
+solution as `<solution>`, then assertions as `<test N>`, in one fresh namespace.
+It never executes task imports in the host Python process. Omitting imports
+preserves the required two-argument tool call. Blank import entries are invalid.
+Import failures stop execution before the solution and return diagnostic output.
+
 For direct integration from trusted Python code:
 
 ```python
 config = SandboxConfig.model_validate_json(config_path.read_text())
 result = await execute_mbpp(MBPPExecutionRequest(
-    code=code, test_list=test_list, config=config,
+    code=code, test_list=test_list, test_imports=task.test_imports, config=config,
 ))
 ```
 

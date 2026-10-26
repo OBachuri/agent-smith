@@ -18,7 +18,10 @@ function emit(text) {
   const kept = bytes.subarray(0, remaining);
   write(kept);
   remaining -= kept.length;
-  truncated ||= bytes.length > kept.length;
+  if (bytes.length > kept.length && !truncated) {
+    truncated = true;
+    write(encoder.encode("\n[Output truncated.]\n"));
+  }
 }
 
 console.log = console.warn = console.error = () => {};
@@ -35,9 +38,6 @@ try {
   python.globals.set("_request_json", JSON.stringify(request));
   write(encoder.encode(request.token + "\n"));
   const passed = python.runPython(driver);
-  if (truncated) {
-    write(encoder.encode("\n[Output truncated.]\n"));
-  }
   if (passed) write(encoder.encode("\n" + request.token + "\n"));
   Deno.exit(passed ? 0 : 1);
 } catch (error) {

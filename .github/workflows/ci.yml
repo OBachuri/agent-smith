@@ -77,10 +77,11 @@ jobs:
           version: "0.13.5"
           python-version: "3.11"
       - name: Install locked dependencies
+        if: matrix.check != 'test'
         run: uv sync --locked
-      - name: Install offline MBPP runtime assets
+      - name: Install MBPP dependencies
         if: matrix.check == 'test'
-        run: npm ci --ignore-scripts --no-audit --no-fund
+        run: make install
       - name: Run ${{ matrix.check }}
         id: check
         run: make ${{ matrix.check }}

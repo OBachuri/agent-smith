@@ -11,7 +11,7 @@ import tempfile
 from typing import Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from src.config_model import SandboxConfig
 
@@ -24,7 +24,17 @@ class MBPPExecutionRequest(BaseModel):
     version: Literal[1] = 1
     code: str = Field(min_length=1)
     test_list: list[str] = Field(min_length=1)
+    test_imports: list[str] = Field(default_factory=list)
     config: SandboxConfig
+
+    @model_validator(mode="after")
+    def require_nonblank_input(self) -> "MBPPExecutionRequest":
+        if not self.code.strip() or any(
+            not text.strip() for text in self.test_list + self.test_imports
+        ):
+            raise ValueError(
+                "Code, tests and import entries must be non-empty.")
+        return self
 
 
 class MBPPExecutionResult(BaseModel):
@@ -33,16 +43,56 @@ class MBPPExecutionResult(BaseModel):
     output: str
 
 
+def execution_result(
+    success: bool, output: str, config: SandboxConfig, diagnostic: str = "",
+) -> MBPPExecutionResult:
+    """Apply the byte budget to every result, including preflight errors."""
+    limit = config.max_output_bytes
+    data = output.encode("utf-8", "replace")
+    if len(data) > limit and not diagnostic:
+        diagnostic = "Output truncated."
+    if diagnostic:
+        suffix = ("[" + diagnostic + "]").encode("utf-8", "replace")
+        room = max(0, limit - len(suffix) - 1)
+        output = data[:room].decode("utf-8", "ignore").rstrip()
+        data = ((output.encode() + b"\n") if output else b"") + suffix
+    return MBPPExecutionResult(
+        success=success, output=data[:limit].decode("utf-8", "ignore").strip(),
+    )
+
+
 async def execute_mbpp(request: MBPPExecutionRequest) -> MBPPExecutionResult:
     """Execute in a fresh offline Deno process, never in the MCP process."""
     deno = shutil.which("deno")
     if deno is None:
-        return MBPPExecutionResult(success=False, output="Deno is required.")
-    if not (ROOT / "node_modules/pyodide/pyodide.mjs").is_file():
-        return MBPPExecutionResult(success=False, output="Run: npm ci")
+        return execution_result(
+            False, "MBPP setup error: Deno was not found on PATH. "
+            "No code or tests were executed. Install the locked dependencies "
+            "with `make install` and launch this server with "
+            "`uv run python mcp_tools_mbpp.py`, or install Deno on PATH.",
+            request.config,
+        )
+    assets = ROOT / "node_modules/pyodide"
+    missing = [name for name in (
+        "pyodide.mjs", "pyodide.asm.js", "pyodide.asm.wasm",
+        "pyodide.asm.data", "pyodide_py.tar", "repodata.json",
+    ) if not (assets / name).is_file()]
+    if missing:
+        return execution_result(
+            False, "MBPP setup error: the local Pyodide installation is "
+            "missing or incomplete. Missing files: " + ", ".join(missing) +
+            ". No code or tests were executed. From the project directory "
+            f"({ROOT}), run `make install` (installs Pyodide using "
+            "`npm ci --ignore-scripts`), then retry the call.",
+            request.config,
+        )
     if sys.platform not in ("linux", "darwin"):
-        return MBPPExecutionResult(
-            success=False, output="Memory monitoring requires Linux or macOS.")
+        return execution_result(
+            False, "MBPP setup error: memory monitoring requires Linux or "
+            "macOS. No code or tests were executed. Run the server on a "
+            "supported operating system.",
+            request.config,
+        )
 
     config = request.config
     token = "__MBPP_" + uuid4().hex + "__"
@@ -96,8 +146,11 @@ async def execute_mbpp(request: MBPPExecutionRequest) -> MBPPExecutionResult:
                 if check.returncode is None:
                     check.kill()
                     await check.wait()
-            if not rss.strip():
-                return
+            if check.returncode or not rss.strip():
+                assert process is not None
+                if process.returncode is not None:
+                    return
+                raise OSError("ps failed or returned no memory measurement")
             if int(rss) > config.max_memory_mb * 1024:
                 failure = "Memory limit exceeded (%s MiB)." % (
                     config.max_memory_mb)
@@ -168,10 +221,12 @@ async def execute_mbpp(request: MBPPExecutionRequest) -> MBPPExecutionResult:
                     process.wait(), config.max_execution_time_seconds,
                 )
             except asyncio.TimeoutError:
-                failure = "Execution timed out after %ss." % (
-                    config.max_execution_time_seconds)
+                failure = ("Execution timed out after %ss; "
+                           "output is partial." %
+                           config.max_execution_time_seconds)
     except asyncio.TimeoutError:
-        failure = "Runtime initialization timed out."
+        failure = ("MBPP runtime initialization timed out after 30s. "
+                   "No code or tests were executed.")
     except (OSError, ValueError) as error:
         failure = failure or f"Runtime execution failed: {error}"
     finally:
@@ -189,15 +244,15 @@ async def execute_mbpp(request: MBPPExecutionRequest) -> MBPPExecutionResult:
     output = bytes(prefix).decode("utf-8", "replace")
     success = (not failure and completed and process is not None and
                process.returncode == 0)
-    diagnostic = failure or ("Output truncated." if truncated else "")
-    if diagnostic:
-        suffix = ("\n[" + diagnostic + "]").encode()
-        room = max(0, config.max_output_bytes - len(suffix))
-        output = output.encode()[:room].decode("utf-8", "ignore")
-        output += suffix[:config.max_output_bytes].decode("utf-8", "ignore")
-    elif not output.strip():
+    diagnostic = " ".join(text for text in (
+        failure, "Output truncated." if truncated else "",
+    ) if text)
+    if (not success and not diagnostic and process is not None and
+            not output.strip()):
+        diagnostic = (f"MBPP runtime exited with status {process.returncode} "
+                      "before confirming that all tests completed. "
+                      "The result is a failure, not a passing test run.")
+    if not output.strip() and not diagnostic:
         output = (f"All {len(request.test_list)} tests passed." if success else
                   "Execution ended before all tests passed.")
-    output = output.encode()[:config.max_output_bytes].decode(
-        "utf-8", "ignore")
-    return MBPPExecutionResult(success=success, output=output.strip())
+    return execution_result(success, output, config, diagnostic)

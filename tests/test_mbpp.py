@@ -243,6 +243,8 @@ class TransportTests(RuntimeCase):
             tools = await client.list_tools()
             self.assertEqual([tool.name for tool in tools], ["run_tests"])
             self.assertEqual(set(tools[0].input_schema["properties"]),
+                             {"code", "test_list", "test_imports"})
+            self.assertEqual(set(tools[0].input_schema["required"]),
                              {"code", "test_list"})
             self.assertEqual(len(await client.list_resources()), 1)
             self.assertEqual(len(await client.list_prompts()), 1)

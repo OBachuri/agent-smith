@@ -36,6 +36,8 @@ def _run(request_json: str) -> bool:
     compile_code = builtins.compile
 
     def allowed_import(name: str) -> bool:
+        if name == "__future__":
+            return True
         return any(name == item or
                    (item.endswith(".*") and
                     (name == item[:-2] or name.startswith(item[:-1])))
@@ -58,6 +60,7 @@ def _run(request_json: str) -> bool:
 
     # Load allowed stdlib modules before restricting the candidate's imports.
     try:
+        importlib.import_module("__future__")
         for pattern in patterns:
             importlib.import_module(pattern.removesuffix(".*"))
     except (ImportError, ModuleNotFoundError):
@@ -89,6 +92,9 @@ def _run(request_json: str) -> bool:
     safe_builtins["open"] = checked_open
     namespace = {"__name__": "__main__", "__builtins__": safe_builtins}
     try:
+        imports = "\n".join(request.get("test_imports", []))
+        if imports:
+            execute(compile_code(imports, "<test imports>", "exec"), namespace)
         execute(compile_code(request["code"], "<solution>", "exec"), namespace)
         for index, test in enumerate(request["test_list"], 1):
             execute(compile_code(test, "<test %d>" % index, "exec"), namespace)
