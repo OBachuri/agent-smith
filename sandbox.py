@@ -4,7 +4,7 @@ import asyncio
 from typing import Optional
 from pathlib import Path
 from fastmcp import Client
-from fastmcp.tools import Tool
+from mcp.types import Tool
 
 # Init Typer app
 app = typer.Typer(
@@ -58,7 +58,7 @@ def manual(tools: list[Tool] | None) -> str:
 
     if tools:
         for tool in tools:
-            schema = tool.inputSchema
+            schema = tool.input_schema
             params = schema.get("properties", {})
             signature = ", ".join(
                 # f"{name}: {python_type(spec)}"
