@@ -1,8 +1,10 @@
 import typer
 import sys
+import asyncio
 from typing import Optional
 from pathlib import Path
 from fastmcp import Client
+from fastmcp.tools import Tool
 
 # Init Typer app
 app = typer.Typer(
@@ -11,27 +13,38 @@ app = typer.Typer(
           " - Launch an interactive sandbox environment.")
 )
 
-# ==== EXAMPLE ===========================================================
-import asyncio
 
-async def get_tools() -> list:
-    async with Client("https://mcp.webrobot.eu/mcp") as client:
-        result = await client.list_tools()
+async def get_tools(server: str) -> list[Tool]:
+    async with Client(server) as client:
+        result: list[Tool] = await client.list_tools()
 
         return result
 
-        # print(f"There are {len(result)} tools")
-        # for tool in result:
-        #     print(f"\n{tool.name}: {tool.description}")
-        #     print(tool.input_schema)
-# ========================================================================
+
+# def python_type(schema: dict) -> str:
+#     t = schema.get("type")
+
+#     if isinstance(t, list):
+#         return " | ".join(
+#             python_type({**schema, "type": typ})
+#             for typ in t
+#         )
+
+#     mapping = {
+#         "string": "str",
+#         "integer": "int",
+#         "number": "float",
+#         "boolean": "bool",
+#         "null": "None",
+#         "object": "dict",
+#         "array": "list",
+#     }
+
+#     return mapping.get(t, "Any")
 
 
-def manual() -> str:
+def manual(tools: list[Tool] | None) -> str:
     """Generate the dynamic manual the LLM receives in the system prompt."""
-
-    tools = asyncio.run(get_tools())
-    tools_to_show = [tools[i] for i in range(5)]
 
     lines = [
         "Sandbox execution manual:",
@@ -42,12 +55,20 @@ def manual() -> str:
         "use keyword arguments.\n",
         "Available tools:"
     ]
-    for tool in tools_to_show:
-        lines.append(f"- {tool.name}: {tool.description}")
-    lines.append("- final_answer(answer: str): terminate the agent " +
-        "loop and return the solution.")
 
-    # Add to lines tools available via MCP
+    if tools:
+        for tool in tools:
+            schema = tool.inputSchema
+            params = schema.get("properties", {})
+            signature = ", ".join(
+                # f"{name}: {python_type(spec)}"
+                f"{name}: {spec}"
+                for name, spec in params.items()
+            )
+            lines.append(f"- {tool.name}({signature}): {tool.description}")
+
+    lines.append("- final_answer(answer: str): terminate the agent loop and " +
+                 "return the solution.")
 
     return "\n".join(lines)
 
@@ -76,7 +97,12 @@ def main(
     Write command and press Ctrl+D
     """
 
-    typer.echo(manual())
+    tools = None
+    if mcp_server:
+        # EXAMPLE: uv run sandbox --mcp-server https://mcp.webrobot.eu/mcp
+        tools = asyncio.run(get_tools(mcp_server))
+
+    typer.echo(manual(tools))
 
     data = ""
 
@@ -88,18 +114,6 @@ def main(
     print("Sandbox: Work is complete,",
           "all connections terminate, all resources released. Bye!")
 
+
 if __name__ == "__main__":
     app()
-
-
-
-
-
-
-
-
-
-# #  Make the script runnable directly via standard I/O (stdio)
-# if __name__ == "__main__":
-#     sys.argv[0] = "uv run -m sandbox"
-#     app()
