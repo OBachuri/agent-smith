@@ -3,7 +3,7 @@ import sys
 import asyncio
 import shlex
 from contextlib import AsyncExitStack
-from typing import Optional
+from typing import Optional, Any
 from pathlib import Path
 from fastmcp import Client
 from mcp.types import Tool
@@ -17,7 +17,7 @@ app = typer.Typer(
 )
 
 
-def get_python_type(prop):
+def get_python_type(prop: Any) -> str:
     types = {
         "string": "str",
         "integer": "int",
