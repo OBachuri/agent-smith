@@ -1,10 +1,13 @@
 import typer
 import sys
 import asyncio
+import shlex
+from contextlib import AsyncExitStack
 from typing import Optional
 from pathlib import Path
 from fastmcp import Client
 from mcp.types import Tool
+from fastmcp.client.transports import StdioTransport
 
 # Init Typer app
 app = typer.Typer(
@@ -12,35 +15,6 @@ app = typer.Typer(
     help=("Agent Smith - SandBox (MCP Client)"
           " - Launch an interactive sandbox environment.")
 )
-
-
-async def get_tools(server: str) -> list[Tool]:
-    async with Client(server) as client:
-        result: list[Tool] = await client.list_tools()
-
-        return result
-
-
-# def python_type(schema: dict) -> str:
-#     t = schema.get("type")
-
-#     if isinstance(t, list):
-#         return " | ".join(
-#             python_type({**schema, "type": typ})
-#             for typ in t
-#         )
-
-#     mapping = {
-#         "string": "str",
-#         "integer": "int",
-#         "number": "float",
-#         "boolean": "bool",
-#         "null": "None",
-#         "object": "dict",
-#         "array": "list",
-#     }
-
-#     return mapping.get(t, "Any")
 
 
 def manual(tools: list[Tool] | None) -> str:
@@ -53,7 +27,9 @@ def manual(tools: list[Tool] | None) -> str:
         "- Use final_answer(answer_string) when the task is solved.",
         "- Positional arguments are rejected for MCP tools;" +
         "use keyword arguments.\n",
-        "Available tools:"
+        "Available tools:",
+        "- final_answer(answer: str): terminate the agent loop and " +
+        "return the solution."
     ]
 
     if tools:
@@ -67,13 +43,47 @@ def manual(tools: list[Tool] | None) -> str:
             )
             lines.append(f"- {tool.name}({signature}): {tool.description}")
 
-    lines.append("- final_answer(answer: str): terminate the agent loop and " +
-                 "return the solution.")
-
     return "\n".join(lines)
 
 
-# @app.command(name="uv run -m sandbox")
+async def sandbox(
+        template: Optional[Path] = None,
+        mcp_stdio: Optional[str] = None,
+        mcp_server: Optional[str] = None) -> None:
+    async with AsyncExitStack() as stack:
+        tools: Optional[list[Tool]] = None
+        client: Optional[Client] = None
+
+        if mcp_stdio:
+            cmd = shlex.split(mcp_stdio)
+            client = Client(
+                StdioTransport(
+                    command=cmd[0],
+                    args=cmd[1:]
+                )
+            )
+        elif mcp_server:
+            # EXAMPLE: uv run sandbox --mcp-server https://mcp.webrobot.eu/mcp
+            client = Client(mcp_server)
+
+        if client is not None:
+            active_client = await stack.enter_async_context(client)
+            tools = await active_client.list_tools()
+
+        typer.echo(manual(tools))
+
+        data = ""
+
+        while (data != "exit" and data != "exit()"):
+            data = sys.stdin.read().strip()
+            # -- run the command
+            print("-"*20, "Received command for sandbox:\n",
+                  data, "\n", "-"*20)
+
+        print("Sandbox: Work is complete,",
+              "all connections terminate, all resources released. Bye!")
+
+
 @app.command()
 def main(
     template: Optional[Path] = typer.Argument(
@@ -97,22 +107,10 @@ def main(
     Write command and press Ctrl+D
     """
 
-    tools = None
-    if mcp_server:
-        # EXAMPLE: uv run sandbox --mcp-server https://mcp.webrobot.eu/mcp
-        tools = asyncio.run(get_tools(mcp_server))
+    # if mcp_stdio and mcp_server:
+    #     wrong format ???
 
-    typer.echo(manual(tools))
-
-    data = ""
-
-    while (data != "exit" and data != "exit()"):
-        data = sys.stdin.read().strip()
-        # -- run the command
-        print("-"*20, "Received command for sandbox:\n", data, "\n", "-"*20)
-
-    print("Sandbox: Work is complete,",
-          "all connections terminate, all resources released. Bye!")
+    asyncio.run(sandbox(template, mcp_stdio, mcp_server))
 
 
 if __name__ == "__main__":
