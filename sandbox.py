@@ -3,7 +3,7 @@ import sys
 import asyncio
 import shlex
 from contextlib import AsyncExitStack
-from typing import Optional
+from typing import Optional, Any
 from pathlib import Path
 from fastmcp import Client
 from mcp.types import Tool
@@ -15,6 +15,53 @@ app = typer.Typer(
     help=("Agent Smith - SandBox (MCP Client)"
           " - Launch an interactive sandbox environment.")
 )
+
+
+def get_python_type(prop: Any) -> str:
+    types = {
+        "string": "str",
+        "integer": "int",
+        "number": "float",
+        "boolean": "bool",
+        "object": "dict[str, Any]",
+    }
+
+    if "anyOf" in prop:
+        options = prop["anyOf"]
+        non_null = [p for p in options if p.get("type") != "null"]
+        result = " | ".join(get_python_type(p) for p in non_null)
+        return f"{result} | None" if len(non_null) < len(options) else result
+
+    typ = prop.get("type")
+
+    if typ == "array":
+        item_type = get_python_type(prop.get("items", {}))
+        return f"list[{item_type}]"
+
+    # if typ == "object":
+    #     properties = prop.get("properties", {})
+    #     if properties:
+    #         value_types = {get_python_type(v) for v in properties.values()}
+    #         if len(value_types) == 1:
+    #             return f"dict[str, {next(iter(value_types))}]"
+    #     return "dict[str, Any]"
+
+    return types.get(typ, "Any")
+
+
+def schema_to_signature(tool: Tool) -> str:
+    schema = tool.input_schema
+    properties = schema.get("properties", {})
+    required = set(schema.get("required", []))
+
+    params = []
+    for name, prop in properties.items():
+        typ = get_python_type(prop)
+
+        default = "" if name in required else " = None"
+        params.append(f"{name}: {typ}{default}")
+
+    return f"{tool.name}({', '.join(params)})"
 
 
 def manual(tools: list[Tool] | None) -> str:
@@ -34,14 +81,7 @@ def manual(tools: list[Tool] | None) -> str:
 
     if tools:
         for tool in tools:
-            schema = tool.input_schema
-            params = schema.get("properties", {})
-            signature = ", ".join(
-                # f"{name}: {python_type(spec)}"
-                f"{name}: {spec}"
-                for name, spec in params.items()
-            )
-            lines.append(f"- {tool.name}({signature}): {tool.description}")
+            lines.append(schema_to_signature(tool))
 
     return "\n".join(lines)
 
