@@ -11,6 +11,8 @@ from src.llm_connector import ProviderConfig, LLMConnector
 from src.config_model import MBPPTaskInput
 from src.sandbox_connector import SandboxClient
 
+from openai.types.chat import ChatCompletionMessageParam
+
 # import fire
 
 # from src.config_model import AgConfig
@@ -186,14 +188,12 @@ def main(
         typer.Exit(code=1)
         return
 
-    
-
     # Record start time
     start_time = time.perf_counter()
     typer.echo("🚀 Start...")
     # -----------
 
-    ts = [
+    ts: list[ChatCompletionMessageParam] = [
             {
                 "role": "system",
                 "content": "You are a Python coding assistant.\n"

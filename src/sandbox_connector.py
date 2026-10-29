@@ -5,6 +5,7 @@ from itertools import count
 from time import sleep
 import shlex
 
+
 class SandboxClient:
     def __init__(self, param: str = "") -> None:
 
@@ -18,7 +19,8 @@ class SandboxClient:
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=None,  # Inherit stderr for diagnostics
-            # text=True,  # In this mode i can't read more then 1 char without bloking 
+            # In this mode i can't read more then 1 char without bloking
+            # text=True,
             bufsize=0,
         )
 
@@ -27,13 +29,15 @@ class SandboxClient:
         if not self.process:
             return
 
+        if self.process.stdout is None:
+            raise RuntimeError("Failed to open stdout pipe for Sandbox")
+
         # make stdout not locking on OS level
         os.set_blocking(self.process.stdout.fileno(), False)
 
         # Register the process stdout stream to a selector
         self.sel = selectors.DefaultSelector()
         self.sel.register(self.process.stdout, selectors.EVENT_READ)
-
 
     def write_std(self, text: str) -> None:
         if self.process.stdin:
@@ -45,14 +49,17 @@ class SandboxClient:
         # Check for data with a timeout (e.g., 0.5 seconds)
         # If timeout=0, it acts as a completely non-blocking check
         events = self.sel.select(timeout=max_sec)
-        
+
         if not events:
             return ""
+
+        if self.process.stdout is None:
+            raise RuntimeError("Sandbox stdout is unavailable")
 
         chunks = []
         while True:
             try:
-                chunk = self.process.stdout.read(4096) # read as byte
+                chunk = self.process.stdout.read(4096)  # read as byte
                 if not chunk:  # Check EOF
                     break
                 chunks.append(chunk)
@@ -65,7 +72,6 @@ class SandboxClient:
         # Decode in text
         return b"".join(chunks).decode("utf-8", errors="ignore")
 
-    
     def request(self, param: str, max_sec: float = 1) -> str:
         if self.process.stdin is None:
             raise RuntimeError("Sandbox stdin is unavailable")
@@ -79,13 +85,13 @@ class SandboxClient:
     def close(self) -> None:
         if self.process.stdin:
             try:
-                self.process.stdin.write("exit()\n")
+                self.process.stdin.write(b"exit()\n")
                 self.process.stdin.flush()
                 sleep(1)
                 self.process.stdin.close()
                 self.process.wait(timeout=2)
             except Exception:
-                pass 
+                pass
 
         self.process.terminate()  # Ask nicely to stop
         try:
