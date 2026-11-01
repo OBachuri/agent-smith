@@ -3,16 +3,24 @@ import re
 import sys
 import asyncio
 import shlex
+import ast
 from contextlib import AsyncExitStack
 from typing import Optional, Any
 from pathlib import Path
 from fastmcp import Client
 from mcp.types import Tool
 from fastmcp.client.transports import StdioTransport
+from dataclasses import dataclass
 from src.config_model import SandboxConfig, SandboxIntermediateResult
 
 
 SANDBOX_TEMPLATE_PATH = "src/sandbox_template.json"
+
+
+@dataclass(frozen=True)
+class ParsedCall:
+    name: str
+    arguments: dict[str, Any]
 
 
 # Init Typer app
@@ -21,6 +29,48 @@ app = typer.Typer(
     help=("Agent Smith - SandBox (MCP Client)"
           " - Launch an interactive sandbox environment.")
 )
+
+
+def parse_tool_call(source: str) -> ParsedCall:
+    try:
+        tree = ast.parse(source.strip(), mode="exec")
+    except SyntaxError as exc:
+        raise ValueError(f"Invalid Python syntax: {exc.msg}") from exc
+
+    if len(tree.body) != 1 or not isinstance(tree.body[0], ast.Expr):
+        raise ValueError("Expected exactly one function call")
+
+    expression = tree.body[0].value
+
+    if not isinstance(expression, ast.Call):
+        raise ValueError("Expected a function call")
+
+    if not isinstance(expression.func, ast.Name):
+        raise ValueError("Only direct function calls are allowed")
+
+    if expression.args:
+        raise ValueError("Positional arguments are not allowed")
+
+    arguments: dict[str, Any] = {}
+
+    for keyword in expression.keywords:
+        if keyword.arg is None:
+            raise ValueError("Unpacking keyword arguments is not allowed")
+
+        if keyword.arg in arguments:
+            raise ValueError(f"Duplicate argument: {keyword.arg}")
+
+        try:
+            arguments[keyword.arg] = ast.literal_eval(keyword.value)
+        except (ValueError, TypeError, SyntaxError) as exc:
+            raise ValueError(
+                f"Argument '{keyword.arg}' must be a literal value"
+            ) from exc
+
+    return ParsedCall(
+        name=expression.func.id,
+        arguments=arguments,
+    )
 
 
 def get_python_type(prop: Any) -> str:
