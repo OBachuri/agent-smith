@@ -96,6 +96,17 @@ def extract_final_answer(data: str, start: int) -> str:
     return ""
 
 
+def build_tool_registry(tools: list[Tool]) -> dict[str, Tool]:
+    registry: dict[str, Tool] = {}
+
+    for tool in tools:
+        if tool.name in registry:
+            raise ValueError(f"Duplicate MCP tool name: {tool.name}")
+        registry[tool.name] = tool
+
+    return registry
+
+
 def run_main_loop(sndbx_cnfg: Optional[SandboxConfig]) -> None:
     data = " "
 
@@ -116,7 +127,7 @@ def run_main_loop(sndbx_cnfg: Optional[SandboxConfig]) -> None:
 
         print(SandboxIntermediateResult(
             success=True,
-            tool_name=data, # EOF ? exit ?
+            tool_name=data,  # EOF ? exit ?
             sandbox_output="42"
         ).model_dump_json(indent=2))
 
@@ -126,7 +137,7 @@ async def sandbox(
         mcp_stdio: Optional[str] = None,
         mcp_server: Optional[str] = None) -> None:
     async with AsyncExitStack() as stack:
-        tools: Optional[list[Tool]] = None
+        tool_registry: Optional[dict[str, Tool]] = None
         client: Optional[Client] = None
         sndbx_cnfg: Optional[SandboxConfig] = None
 
@@ -150,8 +161,9 @@ async def sandbox(
         if client is not None:
             active_client = await stack.enter_async_context(client)
             tools = await active_client.list_tools()
+            tool_registry = build_tool_registry(tools)
 
-        typer.echo(manual(tools))
+        typer.echo(manual(list(tool_registry.values())))
 
         run_main_loop(sndbx_cnfg)
 
