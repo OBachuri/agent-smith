@@ -113,7 +113,7 @@ def run_main_loop(sndbx_cnfg: Optional[SandboxConfig]) -> None:
     while (data != "exit" and data != "exit()" and data != ""):
         data = sys.stdin.read().strip()
 
-        match = re.search(r"\bfinal_answer\s*\(", data)
+        match = re.search(r"\bfinal_answer\(answer=", data)
 
         if match:
             answer = extract_final_answer(data, match.end())
@@ -137,7 +137,7 @@ async def sandbox(
         mcp_stdio: Optional[str] = None,
         mcp_server: Optional[str] = None) -> None:
     async with AsyncExitStack() as stack:
-        tool_registry: Optional[dict[str, Tool]] = None
+        tool_registry: dict[str, Tool] = {}
         client: Optional[Client] = None
         sndbx_cnfg: Optional[SandboxConfig] = None
 
