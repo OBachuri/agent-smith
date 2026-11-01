@@ -43,19 +43,11 @@ def get_python_type(prop: Any) -> str:
         item_type = get_python_type(prop.get("items", {}))
         return f"list[{item_type}]"
 
-    # if typ == "object":
-    #     properties = prop.get("properties", {})
-    #     if properties:
-    #         value_types = {get_python_type(v) for v in properties.values()}
-    #         if len(value_types) == 1:
-    #             return f"dict[str, {next(iter(value_types))}]"
-    #     return "dict[str, Any]"
-
     return types.get(typ, "Any")
 
 
 def schema_to_signature(tool: Tool) -> str:
-    schema = tool.input_schema
+    schema = tool.input_schema or {}
     properties = schema.get("properties", {})
     required = set(schema.get("required", []))
 
@@ -122,8 +114,6 @@ def run_main_loop(sndbx_cnfg: Optional[SandboxConfig]) -> None:
             print(result.model_dump_json(indent=2))
             return
 
-        # -- run the command
-        # print("-"*20, "Received command for sandbox:\n", data, "\n", "-"*20)
         print(SandboxIntermediateResult(
             success=True,
             tool_name=data, # EOF ? exit ?
@@ -165,9 +155,6 @@ async def sandbox(
 
         run_main_loop(sndbx_cnfg)
 
-        # print("Sandbox: Work is complete,",
-        #       "all connections terminate, all resources released. Bye!")
-
 
 @app.command()
 def main(
@@ -192,8 +179,10 @@ def main(
     Write command and press Ctrl+D
     """
 
-    # if mcp_stdio and mcp_server:
-    #     wrong format ???
+    if mcp_stdio and mcp_server:
+        raise ValueError("Wrong format 'uv run --mcp-stdio ... --mcp-server "
+                         "...'. It must contain either mcp-stdio or mcp-server"
+                         ", but not both")
 
     asyncio.run(sandbox(template, mcp_stdio, mcp_server))
 
