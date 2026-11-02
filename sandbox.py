@@ -4,6 +4,8 @@ import sys
 import asyncio
 import shlex
 import ast
+from jsonschema import Draft202012Validator
+from jsonschema.exceptions import SchemaError, ValidationError
 from contextlib import AsyncExitStack
 from typing import Optional, Any
 from pathlib import Path
@@ -71,6 +73,44 @@ def parse_tool_call(source: str) -> ParsedCall:
         name=expression.func.id,
         arguments=arguments,
     )
+
+
+def validate_tool_call(
+    call: ParsedCall,
+    tool_registry: dict[str, Tool]
+) -> Tool | None:
+    if call.name == "final_answer":
+        if set(call.arguments) != {"answer"}:
+            raise ValueError(
+                "final_answer requires exactly one argument: answer"
+            )
+        if not isinstance(call.arguments["answer"], str):
+            raise ValueError("final_answer.answer must be a string")
+        return None
+
+    tool = tool_registry.get(call.name)
+    if tool is None:
+        raise ValueError(f"Unknown tool: {call.name}")
+
+    schema = tool.input_schema or {}
+
+    try:
+        validator = Draft202012Validator(schema)
+        validator.check_schema(schema)
+        validator.validate(call.arguments)
+    except SchemaError as exc:
+        raise ValueError(
+            f"Invalid schema for MCP tool '{call.name}'"
+        ) from exc
+    except ValidationError as exc:
+        path = ".".join(str(item) for item in exc.absolute_path)
+        location = f" at '{path}'" if path else ""
+
+        raise ValueError(
+            f"Invalid arguments for '{call.name}'{location}: {exc.message}"
+        ) from exc
+
+    return tool
 
 
 def get_python_type(prop: Any) -> str:
