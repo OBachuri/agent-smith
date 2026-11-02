@@ -173,13 +173,12 @@ def run_main_loop(sndbx_cnfg: Optional[SandboxConfig]) -> None:
                 sandbox_output=answer.strip("\"\'")
             )
             print(result.model_dump_json(indent=2))
-            return
-
-        print(SandboxIntermediateResult(
-            success=True,
-            tool_name=data,  # EOF ? exit ?
-            sandbox_output="42"
-        ).model_dump_json(indent=2))
+        else:
+            print(SandboxIntermediateResult(
+                success=True,
+                tool_name=data,  # EOF ? exit ?
+                sandbox_output="42"
+            ).model_dump_json(indent=2))
 
 
 async def sandbox(
