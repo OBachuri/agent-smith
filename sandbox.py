@@ -1,5 +1,4 @@
 import typer
-import re
 import sys
 import asyncio
 import shlex
@@ -71,7 +70,7 @@ def parse_tool_call(source: str) -> ParsedCall:
 
     return ParsedCall(
         name=expression.func.id,
-        arguments=arguments,
+        arguments=arguments
     )
 
 
@@ -113,13 +112,49 @@ def validate_tool_call(
     return tool
 
 
+async def dispatch_tool_call(
+    call: ParsedCall,
+    tool_registry: dict[str, Tool],
+    client: Optional[Client],
+) -> SandboxIntermediateResult:
+    tool = validate_tool_call(call, tool_registry)
+
+    if tool is None:
+        return SandboxIntermediateResult(
+            success=True,
+            tool_name="final_answer",
+            sandbox_output=call.arguments["answer"]
+        )
+
+    if not client:
+        raise ValueError("There is no active MCP client")
+
+    try:
+        result = await client.call_tool(
+            call.name,
+            call.arguments
+        )
+    except Exception as exc:
+        return SandboxIntermediateResult(
+            success=False,
+            tool_name=call.name,
+            sandbox_output=f"MCP tool failed: {exc}"
+        )
+
+    return SandboxIntermediateResult(
+        success=True,
+        tool_name=call.name,
+        sandbox_output=str(result)
+    )
+
+
 def get_python_type(prop: Any) -> str:
     types = {
         "string": "str",
         "integer": "int",
         "number": "float",
         "boolean": "bool",
-        "object": "dict[str, Any]",
+        "object": "dict[str, Any]"
     }
 
     if "anyOf" in prop:
@@ -173,19 +208,6 @@ def manual(tools: list[Tool] | None) -> str:
     return "\n".join(lines)
 
 
-def extract_final_answer(data: str, start: int) -> str:
-    depth = 1
-
-    for i in range(start, len(data)):
-        if data[i] == "(":
-            depth += 1
-        elif data[i] == ")":
-            depth -= 1
-            if depth == 0:
-                return data[start:i]
-    return ""
-
-
 def build_tool_registry(tools: list[Tool]) -> dict[str, Tool]:
     registry: dict[str, Tool] = {}
 
@@ -197,28 +219,24 @@ def build_tool_registry(tools: list[Tool]) -> dict[str, Tool]:
     return registry
 
 
-def run_main_loop(sndbx_cnfg: Optional[SandboxConfig]) -> None:
+async def run_main_loop(
+        tool_registry: dict[str, Tool],
+        client: Optional[Client],
+        sndbx_cnfg: Optional[SandboxConfig]
+) -> None:
     data = " "
 
-    while (data != "exit" and data != "exit()" and data != ""):
+    while (True):
         data = sys.stdin.read().strip()
+        if not data or data == "exit" or data == "exit()":
+            # TODO: some quit function
+            print("Sandbox: Work complete,",
+                  "all connections terminated, all resources released. Bye!")
+            return
 
-        match = re.search(r"\bfinal_answer\(answer=", data)
-
-        if match:
-            answer = extract_final_answer(data, match.end())
-            result = SandboxIntermediateResult(
-                success=True,
-                tool_name="final_answer",
-                sandbox_output=answer.strip("\"\'")
-            )
-            print(result.model_dump_json(indent=2))
-        else:
-            print(SandboxIntermediateResult(
-                success=True,
-                tool_name=data,  # EOF ? exit ?
-                sandbox_output="42"
-            ).model_dump_json(indent=2))
+        call = parse_tool_call(data)
+        result = await dispatch_tool_call(call, tool_registry, client)
+        print(result.model_dump_json(indent=2))
 
 
 async def sandbox(
@@ -228,6 +246,7 @@ async def sandbox(
     async with AsyncExitStack() as stack:
         tool_registry: dict[str, Tool] = {}
         client: Optional[Client] = None
+        active_client: Optional[Client] = None
         sndbx_cnfg: Optional[SandboxConfig] = None
 
         if not template:
@@ -249,12 +268,12 @@ async def sandbox(
 
         if client is not None:
             active_client = await stack.enter_async_context(client)
-            tools = await active_client.list_tools()
+            tools = await active_client.list_tools() if active_client else []
             tool_registry = build_tool_registry(tools)
 
         typer.echo(manual(list(tool_registry.values())))
 
-        run_main_loop(sndbx_cnfg)
+        await run_main_loop(tool_registry, active_client, sndbx_cnfg)
 
 
 @app.command()
