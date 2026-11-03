@@ -283,7 +283,7 @@ class Sandbox:
             if not data or data in ("exit", "exit()"):
                 # TODO: some quit function
                 print("Sandbox: Work complete,",
-                    "all connections terminated, all resources released. Bye!")
+                      "all connections terminated, all resources released. Bye!")
                 return
             elif data in ("manual", "manual()"):
                 self.show_manual()
@@ -304,7 +304,7 @@ class Sandbox:
             except Exception as e:
                 result = SandboxIntermediateResult(
                     success=False,
-                    tool_name="some tool",  #TODO: fix name
+                    tool_name="some tool",  # TODO: fix name
                     sandbox_output=str(e)
                 )
             print(result.model_dump_json())
