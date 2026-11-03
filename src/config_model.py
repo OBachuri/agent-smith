@@ -69,7 +69,7 @@ class SandboxIntermediateResult(BaseModel):
         description="Whether the tool or function executed successfully")
     tool_name: str = Field(
         description="Name of the tool or function that was executed")
-    sandbox_output: str = Field(
+    sandbox_output: str | list[str] = Field(
         description="Sandbox execution result (stdout/stderr/error message)")
 
 

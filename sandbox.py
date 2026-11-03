@@ -1,9 +1,10 @@
 import typer
-import re
 import sys
 import asyncio
 import shlex
 import ast
+from jsonschema import Draft202012Validator
+from jsonschema.exceptions import SchemaError, ValidationError
 from contextlib import AsyncExitStack
 from typing import Optional, Any
 from pathlib import Path
@@ -69,7 +70,81 @@ def parse_tool_call(source: str) -> ParsedCall:
 
     return ParsedCall(
         name=expression.func.id,
-        arguments=arguments,
+        arguments=arguments
+    )
+
+
+def validate_tool_call(
+    call: ParsedCall,
+    tool_registry: dict[str, Tool]
+) -> Tool | None:
+    if call.name == "final_answer":
+        if set(call.arguments) != {"answer"}:
+            raise ValueError(
+                "final_answer requires exactly one argument: answer"
+            )
+        if not isinstance(call.arguments["answer"], str):
+            raise ValueError("final_answer.answer must be a string")
+        return None
+
+    tool = tool_registry.get(call.name)
+    if tool is None:
+        raise ValueError(f"Unknown tool: {call.name}")
+
+    schema = tool.input_schema or {}
+
+    try:
+        validator = Draft202012Validator(schema)
+        validator.check_schema(schema)
+        validator.validate(call.arguments)
+    except SchemaError as exc:
+        raise ValueError(
+            f"Invalid schema for MCP tool '{call.name}'"
+        ) from exc
+    except ValidationError as exc:
+        path = ".".join(str(item) for item in exc.absolute_path)
+        location = f" at '{path}'" if path else ""
+
+        raise ValueError(
+            f"Invalid arguments for '{call.name}'{location}: {exc.message}"
+        ) from exc
+
+    return tool
+
+
+async def dispatch_tool_call(
+    call: ParsedCall,
+    tool_registry: dict[str, Tool],
+    client: Optional[Client],
+) -> SandboxIntermediateResult:
+    tool = validate_tool_call(call, tool_registry)
+
+    if tool is None:
+        return SandboxIntermediateResult(
+            success=True,
+            tool_name="final_answer",
+            sandbox_output=call.arguments["answer"]
+        )
+
+    if not client:
+        raise ValueError("There is no active MCP client")
+
+    try:
+        result = await client.call_tool(
+            call.name,
+            call.arguments
+        )
+    except Exception as exc:
+        return SandboxIntermediateResult(
+            success=False,
+            tool_name=call.name,
+            sandbox_output=f"MCP tool failed: {exc}"
+        )
+
+    return SandboxIntermediateResult(
+        success=True,
+        tool_name=call.name,
+        sandbox_output=str(result)
     )
 
 
@@ -79,7 +154,7 @@ def get_python_type(prop: Any) -> str:
         "integer": "int",
         "number": "float",
         "boolean": "bool",
-        "object": "dict[str, Any]",
+        "object": "dict[str, Any]"
     }
 
     if "anyOf" in prop:
@@ -123,7 +198,9 @@ def manual(tools: list[Tool] | None) -> str:
         "use keyword arguments.\n",
         "Available tools:",
         "- final_answer(answer: str): terminate the agent loop and " +
-        "return the solution."
+        "return the solution.",
+        "- show_tools(): show available tool names",
+        "- print(): print a result"
     ]
 
     if tools:
@@ -131,19 +208,6 @@ def manual(tools: list[Tool] | None) -> str:
             lines.append(schema_to_signature(tool))
 
     return "\n".join(lines)
-
-
-def extract_final_answer(data: str, start: int) -> str:
-    depth = 1
-
-    for i in range(start, len(data)):
-        if data[i] == "(":
-            depth += 1
-        elif data[i] == ")":
-            depth -= 1
-            if depth == 0:
-                return data[start:i]
-    return ""
 
 
 def build_tool_registry(tools: list[Tool]) -> dict[str, Tool]:
@@ -157,70 +221,108 @@ def build_tool_registry(tools: list[Tool]) -> dict[str, Tool]:
     return registry
 
 
-def run_main_loop(sndbx_cnfg: Optional[SandboxConfig]) -> None:
-    data = " "
-
-    while (data != "exit" and data != "exit()" and data != ""):
-        data = sys.stdin.read().strip()
-
-        match = re.search(r"\bfinal_answer\(answer=", data)
-
-        if match:
-            answer = extract_final_answer(data, match.end())
-            result = SandboxIntermediateResult(
-                success=True,
-                tool_name="final_answer",
-                sandbox_output=answer.strip("\"\'")
-            )
-            print(result.model_dump_json(indent=2))
-            return
-
-        print(SandboxIntermediateResult(
-            success=True,
-            tool_name=data,  # EOF ? exit ?
-            sandbox_output="42"
-        ).model_dump_json(indent=2))
-
-
-async def sandbox(
-        template: Optional[Path] = None,
+class Sandbox:
+    def __init__(
+        self,
+        template_path: Optional[Path] = None,
         mcp_stdio: Optional[str] = None,
-        mcp_server: Optional[str] = None) -> None:
-    async with AsyncExitStack() as stack:
-        tool_registry: dict[str, Tool] = {}
-        client: Optional[Client] = None
-        sndbx_cnfg: Optional[SandboxConfig] = None
+        mcp_server: Optional[str] = None
+    ) -> None:
+        self.template_path = template_path or Path(SANDBOX_TEMPLATE_PATH)
+        self.mcp_stdio = mcp_stdio
+        self.mcp_server = mcp_server
 
-        if not template:
-            template = Path(SANDBOX_TEMPLATE_PATH)
-        with open(template) as f:
-            sndbx_cnfg = SandboxConfig.model_validate_json(f.read())
+        self.sndbx_cnfg: Optional[SandboxConfig] = None
+        self.client: Optional[Client] = None
+        self.tool_registry: dict[str, Tool] = {}
+        self._stack = AsyncExitStack()
 
-        if mcp_stdio:
-            cmd = shlex.split(mcp_stdio)
-            client = Client(
+    async def __aenter__(self) -> "Sandbox":
+        await self._stack.__aenter__()
+
+        with open(self.template_path) as f:
+            self.sndbx_cnfg = SandboxConfig.model_validate_json(f.read())
+
+        if self.mcp_stdio:
+            cmd = shlex.split(self.mcp_stdio)
+            self.client = Client(
                 StdioTransport(
                     command=cmd[0],
                     args=cmd[1:]
                 )
             )
-        elif mcp_server:
+        elif self.mcp_server:
             # EXAMPLE: uv run sandbox --mcp-server https://mcp.webrobot.eu/mcp
-            client = Client(mcp_server)
+            self.client = Client(self.mcp_server)
 
-        if client is not None:
-            active_client = await stack.enter_async_context(client)
+        if self.client is not None:
+            active_client = await self._stack.enter_async_context(self.client)
             tools = await active_client.list_tools()
-            tool_registry = build_tool_registry(tools)
+            self.tool_registry = build_tool_registry(tools)
 
-        typer.echo(manual(list(tool_registry.values())))
+        return self
 
-        run_main_loop(sndbx_cnfg)
+    async def __aexit__(self, exc_type, exc_value, traceback) -> None:
+        await self._stack.__aexit__(exc_type, exc_value, traceback)
+
+    def show_manual(self) -> None:
+        print(manual(list(self.tool_registry.values())))
+        sys.stdout.flush()
+
+    def show_tools(self) -> list[str]:
+        tools = ["final_answer", "show_tools", "print"]
+        tools.extend([t for t in self.tool_registry])
+        return tools
+
+    async def run(self) -> None:
+        self.show_manual()
+        data = " "
+
+        while (True):
+            data = sys.stdin.read().strip()
+            if not data or data in ("exit", "exit()"):
+                # TODO: some quit function
+                print("Sandbox: Work complete,",
+                      "all connections terminated, all resources released. Bye!")
+                return
+            elif data in ("manual", "manual()"):
+                self.show_manual()
+                continue
+            elif data in ("show_tools", "show_tools()"):
+                result = SandboxIntermediateResult(
+                    success=True,
+                    tool_name="show_tools",
+                    sandbox_output=self.show_tools()
+                )
+                print(result.model_dump_json())
+                sys.stdout.flush()
+                continue
+
+            try:
+                call = parse_tool_call(data)
+                result = await dispatch_tool_call(call, self.tool_registry, self.client)
+            except Exception as e:
+                result = SandboxIntermediateResult(
+                    success=False,
+                    tool_name="some tool",  # TODO: fix name
+                    sandbox_output=str(e)
+                )
+            print(result.model_dump_json())
+            sys.stdout.flush()
+
+
+async def sandbox_main(
+    template_path: Optional[Path] = None,
+    mcp_stdio: Optional[str] = None,
+    mcp_server: Optional[str] = None
+) -> None:
+    async with Sandbox(template_path, mcp_stdio, mcp_server) as sandbox:
+        await sandbox.run()
 
 
 @app.command()
 def main(
-    template: Optional[Path] = typer.Argument(
+    template_path: Optional[Path] = typer.Argument(
         None,
         help="Path to the sandbox template JSON file.",
     ),
@@ -246,7 +348,7 @@ def main(
                          "...'. It must contain either mcp-stdio or mcp-server"
                          ", but not both")
 
-    asyncio.run(sandbox(template, mcp_stdio, mcp_server))
+    asyncio.run(sandbox_main(template_path, mcp_stdio, mcp_server))
 
 
 if __name__ == "__main__":
