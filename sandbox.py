@@ -3,10 +3,13 @@ import sys
 import asyncio
 import shlex
 import ast
+import resource
+import subprocess
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError, ValidationError
 from contextlib import AsyncExitStack
-from typing import Optional, Any
+from types import TracebackType
+from typing import Optional, Any, Type
 from pathlib import Path
 from fastmcp import Client
 from mcp.types import Tool
@@ -198,9 +201,9 @@ def manual(tools: list[Tool] | None) -> str:
         "use keyword arguments.\n",
         "Available tools:",
         "- final_answer(answer: str): terminate the agent loop and " +
-        "return the solution.",
-        "- show_tools(): show available tool names",
-        "- print(): print a result"
+        "return the solution."
+        # "- show_tools(): show available tool names",
+        # "- print(text: str): print a result"
     ]
 
     if tools:
@@ -262,8 +265,31 @@ class Sandbox:
 
         return self
 
-    async def __aexit__(self, exc_type, exc_value, traceback) -> None:
+    async def __aexit__(
+        self,
+        exc_type: Optional[Type[BaseException]],
+        exc_value: Optional[BaseException],
+        traceback: Optional[TracebackType]
+    ) -> None:
         await self._stack.__aexit__(exc_type, exc_value, traceback)
+
+    def _limits(self) -> None:
+        assert self.sndbx_cnfg is not None
+
+        resource.setrlimit(
+            resource.RLIMIT_CPU,
+            (
+                self.sndbx_cnfg.max_execution_time_seconds,
+                self.sndbx_cnfg.max_execution_time_seconds
+            )
+        )
+        resource.setrlimit(
+            resource.RLIMIT_AS,
+            (
+                self.sndbx_cnfg.max_memory_mb * 1024 * 1024,
+                self.sndbx_cnfg.max_memory_mb * 1024 * 1024
+            )
+        )
 
     def show_manual(self) -> None:
         print(manual(list(self.tool_registry.values())))
@@ -274,16 +300,111 @@ class Sandbox:
         tools.extend([t for t in self.tool_registry])
         return tools
 
+    def check_imports(self, names: list[str]) -> None:
+        if not self.sndbx_cnfg:
+            raise RuntimeError("Sandbox configuration is not loaded")
+
+        unauth_imports: list[str] = []
+
+        for name in names:
+            allowed = any(
+                name == rule
+                or (
+                    rule.endswith(".*") and name.startswith(rule[:-2] + ".")
+                )
+                for rule in self.sndbx_cnfg.authorized_imports
+            )
+            if not allowed:
+                unauth_imports.append(name)
+        if unauth_imports:
+            imports = ", ".join(sorted(set(unauth_imports)))
+            raise ValueError(f"Unauthorized import(s) detected: {imports}")
+
+    def validate_python_source(self, source: str) -> None:
+        tree = ast.parse(source, mode="exec")
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+                self.check_imports(names)
+            elif isinstance(node, ast.ImportFrom):
+                self.check_imports([node.module or ""])
+            elif isinstance(node, (ast.Global, ast.Nonlocal)):
+                raise ValueError("Global declarations are not allowed")
+
+    def run_python(self, source: str) -> SandboxIntermediateResult:
+        assert self.sndbx_cnfg is not None
+        try:
+            self.validate_python_source(source)
+        except Exception as e:
+            return SandboxIntermediateResult(
+                success=False,
+                tool_name="python",
+                sandbox_output=str(e)
+            )
+
+        try:
+            completed = subprocess.run(
+                [sys.executable, "-I", "-c", source],
+                cwd="/tmp/agent",
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=self.sndbx_cnfg.max_execution_time_seconds,
+                preexec_fn=self._limits  # Unix only
+            )
+        except subprocess.TimeoutExpired:
+            return SandboxIntermediateResult(
+                success=False,
+                tool_name="python",
+                sandbox_output="Execution timed out"
+            )
+        except OSError as e:
+            return SandboxIntermediateResult(
+                success=False,
+                tool_name="python",
+                sandbox_output=f"Execution failed: {e}"
+            )
+
+        output = completed.stdout
+        if len(output) > self.sndbx_cnfg.max_output_chars:
+            output = output[:self.sndbx_cnfg.max_output_chars]
+
+        if completed.returncode != 0:
+            return SandboxIntermediateResult(
+                success=False,
+                tool_name="python",
+                sandbox_output=completed.stderr[
+                    :self.sndbx_cnfg.max_output_chars
+                ]
+            )
+
+        return SandboxIntermediateResult(
+            success=True,
+            tool_name="python",
+            sandbox_output=output
+        )
+
     async def run(self) -> None:
         self.show_manual()
-        data = " "
 
         while (True):
-            data = sys.stdin.read().strip()
+            data = ""
+
+            while (True):
+                d = await asyncio.to_thread(sys.stdin.readline)
+                if not d or d.strip() == "<<<END_COMMAND>>>":
+                    break
+                data += d
+
+            data = data.strip()
+
             if not data or data in ("exit", "exit()"):
                 # TODO: some quit function
                 print("Sandbox: Work complete,",
-                      "all connections terminated, all resources released. Bye!")
+                      "all connections terminated,",
+                      "all resources released. Bye!")
                 return
             elif data in ("manual", "manual()"):
                 self.show_manual()
@@ -300,7 +421,11 @@ class Sandbox:
 
             try:
                 call = parse_tool_call(data)
-                result = await dispatch_tool_call(call, self.tool_registry, self.client)
+                result = await dispatch_tool_call(
+                    call,
+                    self.tool_registry,
+                    self.client
+                )
             except Exception as e:
                 result = SandboxIntermediateResult(
                     success=False,
