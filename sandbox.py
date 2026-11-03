@@ -198,7 +198,9 @@ def manual(tools: list[Tool] | None) -> str:
         "use keyword arguments.\n",
         "Available tools:",
         "- final_answer(answer: str): terminate the agent loop and " +
-        "return the solution."
+        "return the solution.",
+        "- show_tools(): show available tool names",
+        "- print(): print a result"
     ]
 
     if tools:
@@ -219,66 +221,108 @@ def build_tool_registry(tools: list[Tool]) -> dict[str, Tool]:
     return registry
 
 
-async def run_main_loop(
-        tool_registry: dict[str, Tool],
-        client: Optional[Client],
-        sndbx_cnfg: Optional[SandboxConfig]
-) -> None:
-    data = " "
-
-    while (True):
-        data = sys.stdin.read().strip()
-        if not data or data == "exit" or data == "exit()":
-            # TODO: some quit function
-            print("Sandbox: Work complete,",
-                  "all connections terminated, all resources released. Bye!")
-            return
-
-        call = parse_tool_call(data)
-        result = await dispatch_tool_call(call, tool_registry, client)
-        print(result.model_dump_json(indent=2))
-
-
-async def sandbox(
-        template: Optional[Path] = None,
+class Sandbox:
+    def __init__(
+        self,
+        template_path: Optional[Path] = None,
         mcp_stdio: Optional[str] = None,
-        mcp_server: Optional[str] = None) -> None:
-    async with AsyncExitStack() as stack:
-        tool_registry: dict[str, Tool] = {}
-        client: Optional[Client] = None
-        active_client: Optional[Client] = None
-        sndbx_cnfg: Optional[SandboxConfig] = None
+        mcp_server: Optional[str] = None
+    ) -> None:
+        self.template_path = template_path or Path(SANDBOX_TEMPLATE_PATH)
+        self.mcp_stdio = mcp_stdio
+        self.mcp_server = mcp_server
 
-        if not template:
-            template = Path(SANDBOX_TEMPLATE_PATH)
-        with open(template) as f:
-            sndbx_cnfg = SandboxConfig.model_validate_json(f.read())
+        self.sndbx_cnfg: Optional[SandboxConfig] = None
+        self.client: Optional[Client] = None
+        self.tool_registry: dict[str, Tool] = {}
+        self._stack = AsyncExitStack()
 
-        if mcp_stdio:
-            cmd = shlex.split(mcp_stdio)
-            client = Client(
+    async def __aenter__(self) -> "Sandbox":
+        await self._stack.__aenter__()
+
+        with open(self.template_path) as f:
+            self.sndbx_cnfg = SandboxConfig.model_validate_json(f.read())
+
+        if self.mcp_stdio:
+            cmd = shlex.split(self.mcp_stdio)
+            self.client = Client(
                 StdioTransport(
                     command=cmd[0],
                     args=cmd[1:]
                 )
             )
-        elif mcp_server:
+        elif self.mcp_server:
             # EXAMPLE: uv run sandbox --mcp-server https://mcp.webrobot.eu/mcp
-            client = Client(mcp_server)
+            self.client = Client(self.mcp_server)
 
-        if client is not None:
-            active_client = await stack.enter_async_context(client)
-            tools = await active_client.list_tools() if active_client else []
-            tool_registry = build_tool_registry(tools)
+        if self.client is not None:
+            active_client = await self._stack.enter_async_context(self.client)
+            tools = await active_client.list_tools()
+            self.tool_registry = build_tool_registry(tools)
 
-        typer.echo(manual(list(tool_registry.values())))
+        return self
 
-        await run_main_loop(tool_registry, active_client, sndbx_cnfg)
+    async def __aexit__(self, exc_type, exc_value, traceback) -> None:
+        await self._stack.__aexit__(exc_type, exc_value, traceback)
+
+    def show_manual(self) -> None:
+        print(manual(list(self.tool_registry.values())))
+        sys.stdout.flush()
+
+    def show_tools(self) -> list[str]:
+        tools = ["final_answer", "show_tools", "print"]
+        tools.extend([t for t in self.tool_registry])
+        return tools
+
+    async def run(self) -> None:
+        self.show_manual()
+        data = " "
+
+        while (True):
+            data = sys.stdin.read().strip()
+            if not data or data in ("exit", "exit()"):
+                # TODO: some quit function
+                print("Sandbox: Work complete,",
+                    "all connections terminated, all resources released. Bye!")
+                return
+            elif data in ("manual", "manual()"):
+                self.show_manual()
+                continue
+            elif data in ("show_tools", "show_tools()"):
+                result = SandboxIntermediateResult(
+                    success=True,
+                    tool_name="show_tools",
+                    sandbox_output=self.show_tools()
+                )
+                print(result.model_dump_json())
+                sys.stdout.flush()
+                continue
+
+            try:
+                call = parse_tool_call(data)
+                result = await dispatch_tool_call(call, self.tool_registry, self.client)
+            except Exception as e:
+                result = SandboxIntermediateResult(
+                    success=False,
+                    tool_name="some tool",  #TODO: fix name
+                    sandbox_output=str(e)
+                )
+            print(result.model_dump_json())
+            sys.stdout.flush()
+
+
+async def sandbox_main(
+    template_path: Optional[Path] = None,
+    mcp_stdio: Optional[str] = None,
+    mcp_server: Optional[str] = None
+) -> None:
+    async with Sandbox(template_path, mcp_stdio, mcp_server) as sandbox:
+        await sandbox.run()
 
 
 @app.command()
 def main(
-    template: Optional[Path] = typer.Argument(
+    template_path: Optional[Path] = typer.Argument(
         None,
         help="Path to the sandbox template JSON file.",
     ),
@@ -304,7 +348,7 @@ def main(
                          "...'. It must contain either mcp-stdio or mcp-server"
                          ", but not both")
 
-    asyncio.run(sandbox(template, mcp_stdio, mcp_server))
+    asyncio.run(sandbox_main(template_path, mcp_stdio, mcp_server))
 
 
 if __name__ == "__main__":
