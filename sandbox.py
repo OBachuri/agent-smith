@@ -8,7 +8,8 @@ import subprocess
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError, ValidationError
 from contextlib import AsyncExitStack
-from typing import Optional, Any
+from types import TracebackType
+from typing import Optional, Any, Type
 from pathlib import Path
 from fastmcp import Client
 from mcp.types import Tool
@@ -264,7 +265,12 @@ class Sandbox:
 
         return self
 
-    async def __aexit__(self, exc_type, exc_value, traceback) -> None:
+    async def __aexit__(
+        self,
+        exc_type: Optional[Type[BaseException]],
+        exc_value: Optional[BaseException],
+        traceback: Optional[TracebackType]
+    ) -> None:
         await self._stack.__aexit__(exc_type, exc_value, traceback)
 
     def _limits(self) -> None:
