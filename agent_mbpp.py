@@ -179,14 +179,41 @@ def main(
 
     # Connect to sandbox
     try:
-        sandbox = SandboxClient('--mcp-stdio "python3 mcp_tools_mbpp.py"')
-        sandbox_manual = sandbox.request("manual()")
+        sandbox = SandboxClient('--mcp-stdio "uv run mcp_tools_mbpp.py"')
+        sandbox.read_std(5)  # clear stdout from sandbox
+        sandbox_manual = sandbox.request("manual()",5)
     except Exception as ex:
         typer.secho(
-            f"Error: Can`t run sundbox'!\n{ex}",
+            f"Error: Can`t run sandbox'!\n{ex}",
             fg=typer.colors.RED, err=True)
         typer.Exit(code=1)
         return
+
+    if not sandbox_manual:
+        typer.secho(
+            f"Error: Can`t get manual from sandbox '!\n",
+            fg=typer.colors.RED, err=True)
+        typer.Exit(code=1)
+        return
+
+    print("-"*10, " Sandbox manual:\n", sandbox_manual)
+
+    # t_str = sandbox.request("show_tools()", 5)
+    # print("-- test:", t_str)
+
+
+    try:
+        sandbox_tools_list = sandbox.run_tool("show_tools()").sandbox_output
+    except Exception as ex:
+       typer.secho(
+            f"Error: Can`t get show_tools() in sandbox'!\n{ex}",
+            fg=typer.colors.RED, err=True)
+       typer.Exit(code=1)
+       return
+
+    print("-"*10, " Sandbox tools:\n", sandbox_tools_list, "\n")
+
+    # return
 
     # Record start time
     start_time = time.perf_counter()
@@ -208,14 +235,28 @@ def main(
         },
     ]
 
+    # print("-"*10, " Sandbox manual:\n", sandbox_manual)
+    
+    print("-"*10, " Prompt:")
+
     print(ts)
 
-    # return
+    try:
+        response = llm.chat(
+            ts,
+            temperature=0,
+            extra_body={"reasoning": {"effort": "none"}},
+        )
+    except Exception as ex:
+       typer.secho(
+            f"Error: Can`t get llm response'!\n",
+            fg=typer.colors.RED, err=True)
+       typer.secho(ex, err=True)
 
-    response = llm.chat(
-        ts,
-        temperature=0,
-    )
+       sandbox.close()
+       typer.Exit(code=1)
+       return
+
 
     usage = response.usage
     if usage is not None:
@@ -225,7 +266,20 @@ def main(
         print("Total tokens:", usage.total_tokens)
         print("-"*20)
 
+    print("LLM content:")
     print(response.choices[0].message.content)
+
+    # -----------
+    print("+"*10)
+    print("LLM tool_calls:")
+    print(response.choices[0].message.tool_calls)
+    # -----------
+    print("+"*10)
+    print("LLM reasoning:")
+    print(response.choices[0].message.reasoning)
+
+    print("+"*10, "full llm response:")
+    print(response)
 
     # -----------
     typer.echo("✅ Done!")

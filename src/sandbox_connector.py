@@ -5,6 +5,7 @@ from itertools import count
 from time import sleep
 import shlex
 
+from src.config_model import SandboxIntermediateResult
 
 class SandboxClient:
     def __init__(self, param: str = "") -> None:
@@ -78,9 +79,14 @@ class SandboxClient:
         if self.process.stdout is None:
             raise RuntimeError("Sandbox stdout is unavailable")
 
-        self.write_std(f"{param.strip()}\n")
+        self.write_std(f"{param.strip()}\n<<<END_COMMAND>>>\n")
 
         return self.read_std(max_sec=max_sec)
+
+    def run_tool(self, tool_with_param: str, max_sec: float = 2) -> SandboxIntermediateResult:
+        json_str = self.request(tool_with_param, max_sec=max_sec)
+        # print("json_str:", json_str)
+        return SandboxIntermediateResult.model_validate_json(json_str)
 
     def close(self) -> None:
         if self.process.stdin:

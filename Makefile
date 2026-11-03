@@ -28,14 +28,20 @@ install:
 	set -e
 	uv sync --locked
 	npm ci --ignore-scripts
+	
+	# brew install deno
+	# deno install npm:pyodide
+
+	##  Download and install nvm (with nodejs):
+	# curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.8/install.sh | bash
+	# npm -v  #  Verify npm version (current LTS "11.20.0")
+	# nvm install 26   #  Download and install Node.js
 
 run:
-	# uv run python -m src $(ACOMMAND) $(ARGS)
-	# uv run python -m src
 
 	uv run python -m agent_mbpp --task-file cache/mbpp_task.json \
 		--output cache/mbpp_solution.json \
-		--model-name "openrouter/free" \
+		--model-name "cohere/north-mini-code:free" \
 		--provider-url "https://openrouter.ai/api/v1"
 #		--provider-api-keys-file "cache/mbpp_task.json" 
 # 		--provider-api-key "1 zsdfsd" \
@@ -43,11 +49,12 @@ run:
 # 
 #		--model-name "openrouter/free" "google/gemma-4-31b-it:free" \
 #		--model-name "google/gemini-3.8-flash" not free\
+# 		"nvidia/nemotron-3.5-super-vl:free"
+# 		"cohere/north-mini-code:free"
 
 
 debug:
 	uv run python -m pdb -m src
-
 
 check-venv:
 	@if [ -z "$$VIRTUAL_ENV" ]; then \
