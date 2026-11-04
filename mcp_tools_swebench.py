@@ -155,10 +155,6 @@ def create_server(
     return SWEBenchMCP(root, config or SandboxConfig(), task).server
 
 
-def terminate(signum: int, frame: Any) -> None:
-    raise KeyboardInterrupt
-
-
 mcp = create_server()
 app = typer.Typer(add_completion=False)
 
@@ -193,7 +189,7 @@ def main(
             raise typer.BadParameter(f"Cannot load SWE-bench task: {error}")
     server = create_server(config=policy, task=task)
 
-    signal.signal(signal.SIGTERM, terminate)
+    signal.signal(signal.SIGTERM, signal.default_int_handler)
     if transport == "http":
         server.run(transport="http", host=host, port=port, show_banner=False)
     else:

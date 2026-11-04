@@ -62,7 +62,6 @@ class ContractTests(unittest.IsolatedAsyncioTestCase):
         request = run.call_args.args[0]
         self.assertEqual(request.config.model_dump(), config.model_dump())
         self.assertEqual(request.code, "pass")
-        self.assertEqual(request.version, 1)
 
     def test_invalid_limits_and_result_types_are_rejected(self) -> None:
         for field in ("max_execution_time_seconds", "max_memory_mb",

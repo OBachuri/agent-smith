@@ -143,14 +143,40 @@ class RepositoryCase(unittest.TestCase):
         with self.assertRaisesRegex(ToolError, "timed out"):
             self.tools.search_code("(a+)+$", "long.txt")
 
-    def test_recursive_glob_includes_root_files(self) -> None:
+    def test_globs_include_nested_files_and_one_star_depth(self) -> None:
         (self.repo / "pkg").mkdir()
+        (self.repo / "pkg/extra.py").write_text("def solve():\n    return 1\n")
         (self.repo / "pkg/nested.py").write_text("value = 1\n")
-        output = self.tools.list_files(pattern="**/*.py")
-        self.assertIn(str(self.repo / "module.py"), output)
-        self.assertIn(str(self.repo / "pkg/nested.py"), output)
-        self.assertIn("module.py", self.tools.search_code(
-            "def solve", "**/*.py"))
+        (self.repo / "pkg/sub").mkdir()
+        (self.repo / "pkg/sub/deep.py").write_text(
+            "def solve():\n    return 2\n")
+        (self.repo / "notes.txt").write_text("def solve\n")
+
+        def listed(pattern: str) -> list[str]:
+            return sorted(self.tools.list_files(".", pattern).splitlines())
+
+        py = [str(self.repo / name) for name in (
+            "consumer.py", "module.py", "pkg/extra.py", "pkg/nested.py",
+            "pkg/sub/deep.py",
+        )]
+        self.assertEqual(listed("*.py"), py)
+        self.assertEqual(listed("**/*.py"), py)
+        self.assertNotIn(str(self.repo / "notes.txt"), listed("*.py"))
+        self.assertIn(str(self.repo / "notes.txt"), listed("*"))
+        self.assertIn(str(self.repo / "notes.txt"), listed("**/*"))
+        self.assertEqual(listed("pkg/*.py"), [str(self.repo / name)
+                         for name in ("pkg/extra.py", "pkg/nested.py")])
+        self.assertEqual(listed("pkg/**/*.py"),
+                         [str(self.repo / "pkg/sub/deep.py")])
+
+        found = self.tools.search_code(r"^def\s+solve", "*.py")
+        self.assertIn("module.py", found)
+        self.assertIn("pkg/sub/deep.py", found)
+        self.assertNotIn("notes.txt", found)
+        shallow = self.tools.search_code(r"^def\s+solve", "pkg/*.py")
+        self.assertIn("pkg/extra.py", shallow)
+        self.assertNotIn("deep.py", shallow)
+        self.assertNotIn("module.py", shallow)
 
     def test_definitions_include_async(self) -> None:
         (self.repo / "broken.py").write_text("def broken(:")

@@ -39,7 +39,6 @@ The typed execution request serializes as:
 
 ```json
 {
-  "version": 1,
   "code": "def add(a, b): return a + b",
   "test_list": ["assert add(2, 3) == 5"],
   "test_imports": [],

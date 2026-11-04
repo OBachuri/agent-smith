@@ -6,7 +6,6 @@ import shutil
 import signal
 import sys
 import tempfile
-from typing import Literal
 from uuid import uuid4
 
 from anyio import CancelScope
@@ -18,7 +17,6 @@ from src.docker_process import capture, start_process
 
 class MBPPExecutionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    version: Literal[1] = 1
     code: str = Field(min_length=1)
     test_list: list[str] = Field(min_length=1)
     test_imports: list[str] = Field(default_factory=list)

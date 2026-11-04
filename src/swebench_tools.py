@@ -1,6 +1,5 @@
 import ast
 from contextlib import contextmanager
-import fnmatch
 import io
 import os
 from pathlib import Path
@@ -219,10 +218,7 @@ class RepositoryTools:
                 )
                 for name in sorted(files):
                     relative = Path(current) / name
-                    if not (fnmatch.fnmatchcase(name, pattern) or
-                            relative.match(pattern) or
-                            (pattern.startswith("**/") and
-                             relative.match(pattern[3:]))):
+                    if not relative.match(pattern.removeprefix("**/")):
                         continue
                     info = os.stat(
                         name, dir_fd=current_fd, follow_symlinks=False,
