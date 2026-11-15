@@ -10,7 +10,8 @@ import typer
 from src.llm_connector import ProviderConfig, LLMConnector
 from src.config_model import MBPPTaskInput, StepMetrics, SolutionOutput
 from src.sandbox_connector import SandboxClient
-from src.agent_utils import mpc_arguments_to_python
+from src.agent_utils import mpc_arguments_to_python, it_is_python_code
+from src.agent_utils import it_is_tool_call, mpc_result_to_txt
 
 from openai.types.chat import ChatCompletionMessageParam
 
@@ -81,6 +82,13 @@ def main(
                   " (LLM_API_KEYS='[\"key_1\", \"key_2\"]').")
         )
     ] = None,
+    print_debug: Annotated[
+        bool,
+        typer.Option(
+            "--print-debug",
+            help="Print additional information during run.",
+        )
+    ] = False,
 ) -> None:
 
     typer.echo("-"*20)
@@ -89,6 +97,7 @@ def main(
     typer.echo(f"📥 Output file: {output}")
     typer.echo(f"🤖 Model name: {model_name}")
     typer.echo(f"🌐 Provider URL: {provider_url}")
+    typer.echo(f"Print debug: {print_debug}")
     typer.echo("-"*20)
 
     if not provider_api_key:
@@ -197,34 +206,41 @@ def main(
         typer.Exit(code=1)
         return
 
-    print("-"*10, " Sandbox manual:\n", sandbox_manual)
+    if print_debug:
+        print("-"*10, " Sandbox manual:\n", sandbox_manual)
 
     # t_str = sandbox.request("show_tools()", 5)
     # print("-- test:", t_str)
 
     try:
-        sandbox_tools_list = sandbox.run_tool("show_tools()").sandbox_output
+        sandbox_tools_list_ = sandbox.run_tool("show_tools()").sandbox_output
     except Exception as ex:
         typer.secho(
             f"Error: Can`t get show_tools() in sandbox'!\n{ex}",
             fg=typer.colors.RED, err=True)
         typer.Exit(code=1)
         return
+    if isinstance(sandbox_tools_list_, str):
+        sandbox_tools_list = [sandbox_tools_list_]
+    else:
+        sandbox_tools_list = list(sandbox_tools_list_)
 
-    print("-"*10, " Sandbox tools:\n", sandbox_tools_list, "\n")
+    if print_debug:
+        print("-"*10, " Sandbox tools:\n", sandbox_tools_list, "\n")
 
     # return
 
     # Record start time
     start_time = time.perf_counter()
     typer.echo("🚀 Start...")
-    # -----------
+    # ----------- assistant
 
     messages: list[ChatCompletionMessageParam] = [
         {
             "role": "system",
-            "content": "You are a Python coding assistant.\n"
-            "You must use MCP server via Sandbox.\n"+sandbox_manual,
+            "content": "You are a Python coding agent.\n"
+            "You must use MCP tools via Sandbox to check "
+            "candidate code and then send final result.\n"+sandbox_manual,
         },
         {
             "role": "user",
@@ -240,6 +256,7 @@ def main(
     # print("-"*10, " Sandbox manual:\n", sandbox_manual)
 
     solution = ""
+    reasoning = ""
     llm_step_number = 0
     llm_finish = False
     llm_tested_code = False
@@ -307,11 +324,14 @@ def main(
             print("Total tokens:", usage.total_tokens)
             print("-"*20)
 
-        if response.choices[0].message.content:
-            llm_response_raw_text += response.choices[0].message.content
-        if response.choices[0].message.reasoning:
+        msg = response.choices[0].message
+        if msg.content:
+            llm_response_raw_text += msg.content
+        reasoning = (getattr(msg, "reasoning", "")
+                     or (msg.model_extra or {}).get("reasoning", ""))
+        if reasoning:
             llm_response_raw_text += ("\n<reasoning>" +
-                                      response.choices[0].message.reasoning +
+                                      reasoning +
                                       "\n</reasoning>\n")
 
         print("LLM content:")
@@ -319,10 +339,12 @@ def main(
         # -----------
         print("+"*10)
         print("LLM reasoning:")
-        print(response.choices[0].message.reasoning)
+        print(reasoning)
 
         # print("+"*10, "full llm response:")
         # print(response)
+        # print("------ response.choices[0]:")
+        # print(response.choices[0])
         print("+"*10)
 
         # -----------
@@ -353,31 +375,51 @@ def main(
                         messages.append(
                             cast(ChatCompletionMessageParam,
                                  {
-                                     "role": "tool",
-                                     "tool_call_id": call_id,
-                                     "content": ("Error: Tool (name="
-                                                 f"{tool_name}) not found!")
+                                    "role": "tool",
+                                    "tool_call_id": call_id,
+                                    "content": ("Error: Tool (name="
+                                                f"{tool_name}) not found!")
                                  }))
                         llm_finish = False
                         continue
                     arg_str = ""
-                    if tool_call.function.arguments:
+                    if (tool_call.function.arguments
+                       and tool_call.function.arguments.strip()):
                         arg_str = mpc_arguments_to_python(
                             tool_call.function.arguments)
-                    sb_call = f"{tool_name}({arg_str})"
+                        if not arg_str:
+                            messages.append(
+                                cast(
+                                    ChatCompletionMessageParam,
+                                    {
+                                        "role": "tool",
+                                        "tool_call_id": call_id,
+                                        "content": (
+                                            "Error: parsing tool "
+                                            "arguments from json!\n"
+                                            f'tool_name="{tool_name}",\n'
+                                            'arguments="'
+                                            f'{tool_call.function.arguments}"'
+                                            )
+                                    }))
+                            llm_finish = False
+                            continue
+
+                    sb_call = f"print({tool_name}({arg_str}))"
                     print(" - call_id:", call_id)
                     print(" - call:", sb_call)
                     sandbox_input += sb_call + "\n"
+                    # print("=====", sandbox_input)
                     result_ = sandbox.run_tool(sb_call)
-                    tool_result = result_.sandbox_output
+                    tool_result = mpc_result_to_txt(result_.sandbox_output)
                     sandbox_output += str(tool_result) + "\n"
                     print(" - result:", tool_result)
                     messages.append(
                         cast(ChatCompletionMessageParam,
                              {
-                                 "role": "tool",
-                                 "tool_call_id": call_id,
-                                 "content": tool_result
+                                "role": "tool",
+                                "tool_call_id": call_id,
+                                "content": tool_result
                              }))
                     # print("*********** message:", messages)
                     if tool_name == 'run_tests' and result_.success:
@@ -398,7 +440,80 @@ def main(
         else:
             #  chek if model ask tool in python style
             # for example for model_name: nvidia/nemotron-3.5-super-vl:free
-            pass
+
+            # (a) Python code blocks (primary) — “‘python ... “‘ <end_code>
+            python_text: list[str] = []
+
+            if response.choices[0].message.content:
+                str_ = str(response.choices[0].message.content).strip()
+                start = 0
+                while (start >= 0):
+                    start = str_.find("```python", start)
+                    if start >= 0:
+                        end = str_.find("```", start + 9)
+                        if end > start:
+                            python_text.append(str_[start+9:end])
+                            start = max(start, end) + 3
+                if not python_text:
+                    start = 0
+                    while (start >= 0):
+                        start = str_.find("```", start)
+                        if start >= 0:
+                            end = str_.find("```", start + 3)
+                            if end > start:
+                                code_txt = str_[start+3:end]
+                                start = max(start, end) + 3
+                                if it_is_python_code(code_txt):
+                                    python_text.append(code_txt)
+
+            # if not find python code in content - try to find it in reasoning
+            if (not python_text) and reasoning:
+                str_ = str(reasoning).strip()
+                start = 0
+                while (start >= 0):
+                    start = str_.find("```python", start)
+                    if start >= 0:
+                        end = str_.find("```", start + 9)
+                        if end > start:
+                            python_text.append(str_[start+9:end])
+                            start = max(start, end) + 3
+                if not python_text:
+                    start = 0
+                    while (start >= 0):
+                        start = str_.find("```", start)
+                        if start >= 0:
+                            end = str_.find("```", start + 3)
+                            if end > start:
+                                code_txt = str_[start+3:end]
+                                start = max(start, end) + 3
+                                if it_is_python_code(code_txt):
+                                    python_text.append(code_txt)
+
+            # try to find tools call
+            if python_text:
+                code_txt = "\n".join(python_text)
+                tools_ = it_is_tool_call(code_txt, sandbox_tools_list)
+                if tools_:
+                    # try to call sandbox with this code
+                    print("== sandbox call:")
+                    print(code_txt)
+                    print("\n== end of call to sandbox")
+                    result_ = sandbox.run_tool(code_txt)
+                    tool_result = result_.sandbox_output
+                    print("== result:", result_)
+                    print("== end")
+                    if result_.success:
+                        if "final_answer" in tools_:
+                            solution = str(tool_result)
+                            # if not llm_tested_code:
+                            #     pass  # test in sandbox if LLM not tested it
+                            llm_finish = True
+                            continue
+                        messages.append({
+                            "role": "user",
+                            "content": f"Sandbox observation:\n{tool_result}",
+                        })
+                        llm_finish = False
 
         # Calculate duration in milliseconds accurately
         llm_duration = int((llm_finish_time - llm_start_time) * 1000)
@@ -413,7 +528,7 @@ def main(
             sandbox_input=sandbox_input.strip(),
             sandbox_output=sandbox_output.strip(),
             retries=llm_retries
-        )
+            )
         steps.append(current_step)
         print("==== ", current_step)
 

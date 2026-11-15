@@ -28,6 +28,7 @@ install:
 	set -e
 	uv sync --locked
 	npm ci --ignore-scripts
+	mkdir -p /tmp/agent
 	
 	# brew install deno
 	# deno install npm:pyodide
@@ -42,15 +43,19 @@ run:
 	uv run python -m agent_mbpp --task-file cache/mbpp_task.json \
 		--output cache/mbpp_solution.json \
 		--model-name "cohere/north-mini-code:free" \
-		--provider-url "https://openrouter.ai/api/v1"
+		--provider-url "https://openrouter.ai/api/v1" \
+		--print-debug
+
 #		--provider-api-keys-file "cache/mbpp_task.json" 
 # 		--provider-api-key "1 zsdfsd" \
 # 		--provider-api-key "2 zsdfsd"
 # 
 #		--model-name "openrouter/free" "google/gemma-4-31b-it:free" \
 #		--model-name "google/gemini-3.8-flash" not free\
-# 		"nvidia/nemotron-3.5-super-vl:free"
-# 		"cohere/north-mini-code:free"
+# 		"cohere/north-mini-code:free" -- call MCP tool  !!!!!! 1
+# 		"nvidia/nemotron-3.5-super-vl:free"  - call in python style, but every time new answer
+#		"stealth/crouton-alpha"
+
 
 
 debug:
@@ -123,7 +128,13 @@ lint-strict: flake8
 	git ls-files -z -- '*.py' | xargs -0 uv run --frozen mypy \
 	--strict --explicit-package-bases --follow-imports=silent
 
+list-mbpp:
+	uv run fastmcp list mcp_tools_mbpp.py  --resources --prompts
 
-.PHONY: install run debug clean format lint lint-strict flake8 mypy test test-docker fclean runapi check-venv venv
+list-swe:
+	uv run fastmcp list mcp_tools_swebench.py  --resources --prompts
+
+
+.PHONY: install run debug clean format lint lint-strict flake8 mypy test test-docker fclean runapi check-venv venv list-mbpp list-swe
 
 #  ln -s ~/goinfre/uv uv
