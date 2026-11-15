@@ -1,5 +1,7 @@
 import json
 from typing import Any
+import ast
+import re
 
 
 def mpc_arguments_to_python(arg_json: str) -> str:
@@ -64,3 +66,62 @@ def mpc_arguments_to_python(arg_json: str) -> str:
             else:
                 arg_str += d_key + "=" + json.dumps(d)
     return arg_str
+
+
+def it_is_python_code(txt: str) -> bool:
+    if not txt or txt.strip() == '':
+        return False
+    try:
+        # ast.parse throws a SyntaxError if the string is not valid Python
+        ast.parse(txt)
+
+        # Additional safety check: empty strings or plain single words
+        # (like "Python") are technically valid single-expression ASTs,
+        # but they aren't "programs". We check if there's actual structure.
+        return True
+    except SyntaxError:
+        return False
+
+
+def it_is_tool_call(code_txt: str, func_lst: list[str]) -> list[str]:
+
+    # First try to find with text search
+
+    pattern = r'\b(' + '|'.join(map(re.escape, func_lst)) + r')\s*\('
+    lst_ = re.findall(pattern, code_txt)
+    if not lst_:
+        return []
+
+    # Check if that it was in code, not in some comments
+    res_: list[str] = []
+
+    try:
+        tree = ast.parse(code_txt)
+    except Exception:
+        # can`t parce this text as Python code
+        return []
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Name):
+                name = node.func.id
+                if name in lst_:
+                    res_.append(name)
+    return res_
+
+
+def mpc_result_to_txt(r_str: str | list[str]) -> str | list[str]:
+    if isinstance(r_str, str) and "result" in r_str:
+        try:
+            # Parse as JSON into an object
+            json_ = json.loads(r_str)
+            return str(json_.get("result", r_str))
+        except Exception:
+            pass
+        try:
+            # Parse outer string to dict using AST
+            data_dict = ast.literal_eval(r_str)
+            return str(data_dict.get("result", r_str))
+        except Exception:
+            return r_str
+    return r_str
