@@ -569,16 +569,25 @@ class Sandbox:
                 value, ensure_ascii=False, default=str
             ).encode("utf-8")
 
-            limit = self.config.max_output_bytes
-            truncated = len(encoded) > limit
+            max_bytes = self.config.max_output_bytes
+            max_chars = self.config.max_output_chars
+
+            truncated = (
+                len(encoded) > max_bytes or
+                len(encoded.decode("utf-8")) > max_chars
+            )
 
             if truncated:
-                preview = encoded[:max(0, limit - 100)].decode(
+                warning = "\n[MCP output truncated: JSON preview only]"
+                budget_bytes = max(0, max_bytes - len(warning.encode("utf-8")))
+                budget_chars = max(0, max_chars - len(warning))
+
+                preview = encoded[:budget_bytes].decode(
                     "utf-8", errors="ignore"
-                )
+                )[:budget_chars]
                 value = (
                     preview
-                    + "\n[MCP output truncated: JSON preview only]"
+                    + warning
                 )
 
             return {
@@ -761,13 +770,19 @@ class Sandbox:
 
                     if truncated:
                         output += (
-                            "\n[Sandbox: Output truncated due to size limits.]"
+                            "\n[Sandbox: Output truncated due to size limits "
+                            "(Maximum characters: "
+                            f"{self.config.max_output_chars} / Maximum bytes: "
+                            f"{self.config.max_output_bytes} bytes).]"
                         )
 
                     if tool_truncated:
                         output += (
                             "\n[Sandbox: MCP tool output was truncated "
                             "due to configured size limits.]"
+                            "(Maximum characters: "
+                            f"{self.config.max_output_chars} / Maximum bytes: "
+                            f"{self.config.max_output_bytes} bytes).]"
                         )
 
                     was_truncated = truncated or tool_truncated
@@ -801,11 +816,18 @@ class Sandbox:
                     f"Partial output:\n{''.join(pieces)}\n"
                     "Worker terminated. Namespace state was lost."
                     + (
-                        "\n[Sandbox: Output truncated due to size limits.]"
+                        "\n[Sandbox: Output truncated due to size limits "
+                        "(Maximum characters: "
+                        f"{self.config.max_output_chars} / Maximum bytes: "
+                        f"{self.config.max_output_bytes} bytes).]"
                         if truncated else ""
                     )
                     + (
-                        "\n[Sandbox: MCP tool output was truncated.]"
+                        "\n[Sandbox: MCP tool output was truncated "
+                        "due to configured size limits.]"
+                        "(Maximum characters: "
+                        f"{self.config.max_output_chars} / Maximum bytes: "
+                        f"{self.config.max_output_bytes} bytes).]"
                         if tool_truncated else ""
                     )
                 )
