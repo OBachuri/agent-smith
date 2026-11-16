@@ -299,9 +299,6 @@ class Sandbox:
                     items = await method()
                     setattr(self, attribute, items)
                 except Exception:
-                    # self.discovery_errors[attribute] = (
-                    #     f"{type(exc).__name__}: {exc}"
-                    # )
                     setattr(self, attribute, [])
 
         return self
@@ -716,6 +713,9 @@ class Sandbox:
 
                     try:
                         response = await self._handle_mcp_request(message)
+                        value = response.get("value", {})
+                        if 'result' in value:
+                            response["value"] = value.get("result")
 
                         process.stdin.write(
                             (json.dumps(response, ensure_ascii=False) + "\n")
