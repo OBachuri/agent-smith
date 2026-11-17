@@ -24,12 +24,12 @@ restricted_builtins = _security.restricted_builtins
 
 
 class FinalAnswerSignal(BaseException):
-    def __init__(self, answer: str):
+    def __init__(self, answer: str) -> None:
         self.answer = answer
 
 
 class EditValidationSignal(BaseException):
-    def __init__(self, status: str, message: str):
+    def __init__(self, status: str, message: str) -> None:
         self.status = status
         self.message = message
         super().__init__(message)
@@ -148,8 +148,9 @@ def mcp_rpc(operation: str, **arguments: Any) -> Any:
 
 
 def create_mcp_namespace(
-    aliases: dict[str, str]
-) -> dict:
+    aliases: dict[str, str],
+    tool_parameters: dict[str, list[str]]
+) -> dict[str, Any]:
     """Build Python-callable MCP wrappers inside the worker."""
 
     def mcp_call_tool(name: str, **kwargs: Any) -> Any:
@@ -189,8 +190,28 @@ def create_mcp_namespace(
     }
 
     def create_tool_wrapper(original_name: str) -> Callable:
-        def wrapper(**kwargs: Any) -> Any:
-            return mcp_call_tool(original_name, **kwargs)
+        param_names: list[str] = tool_parameters[original_name]
+
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            if len(args) > len(param_names):
+                raise TypeError(
+                    f"{original_name}() expected at most "
+                    f"{len(param_names)} positional arguments, "
+                    f"got {len(args)}"
+                )
+
+            arguments = dict(kwargs)
+
+            for name, value in zip(param_names, args):
+                if name in arguments:
+                    raise TypeError(
+                        f"{original_name}() got multiple values "
+                        f"for argument '{name}'"
+                    )
+                arguments[name] = value
+
+            return mcp_call_tool(original_name, **arguments)
+
         return wrapper
 
     for python_name, original_name in aliases.items():
@@ -204,7 +225,7 @@ def create_mcp_namespace(
 class OutputStream:
     """Forward sandbox output to the parent as JSON messages."""
 
-    def __init__(self, name: str):
+    def __init__(self, name: str) -> None:
         self.name = name
 
     def write(self, text: str) -> int:
@@ -299,7 +320,10 @@ def main() -> None:
                     "validate_edited_python": validate_edited_python
                 }
                 namespace.update(
-                    create_mcp_namespace(message.get("tools", {}))
+                    create_mcp_namespace(
+                        message.get("tools", {}),
+                        message.get("tool_parameters", {})
+                    )
                 )
                 initialized = True
                 send({"type": "ready"})

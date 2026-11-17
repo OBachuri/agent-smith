@@ -359,7 +359,11 @@ class Sandbox:
             request = {
                 "type": "init",
                 "config": self.config.model_dump(),
-                "tools": self.tool_aliases
+                "tools": self.tool_aliases,
+                "tool_parameters": {
+                    name: list((tool.input_schema or {}).get("properties", {}))
+                    for name, tool in self.tool_registry.items()
+                }
             }
 
             self._worker.stdin.write(
