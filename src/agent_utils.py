@@ -111,6 +111,8 @@ def it_is_tool_call(code_txt: str, func_lst: list[str]) -> list[str]:
 
 
 def mpc_result_to_txt(r_str: str | list[str]) -> str | list[str]:
+    # Return "result" from MCP response
+
     if isinstance(r_str, str) and "result" in r_str:
         try:
             # Parse as JSON into an object

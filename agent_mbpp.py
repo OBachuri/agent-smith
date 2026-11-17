@@ -89,7 +89,27 @@ def main(
             help="Print additional information during run.",
         )
     ] = False,
+    is_reasoning: Annotated[
+        bool,
+        typer.Option(
+            "--reasoning",
+            help="Model can't work without reasoning.",
+        )
+    ] = False,
+    max_iterations: Annotated[
+        int,
+        typer.Option(
+            "--max-iterations",
+            min=1,
+            max=50,
+            help="Maximum steps to solve the task.",
+        )
+    ] = 5,
+
 ) -> None:
+
+    def final_chek(f_str: str) -> str:
+        return f_str
 
     typer.echo("-"*20)
     typer.echo("Agent Smith CLI (MBPP)")
@@ -262,7 +282,7 @@ def main(
     llm_tested_code = False
     steps: list[StepMetrics] = []
 
-    while llm_step_number < 5 and not llm_finish:
+    while llm_step_number < max_iterations and not llm_finish:
         llm_step_number += 1
         llm_finish = True
         llm_input_tokens = 0
@@ -286,10 +306,15 @@ def main(
         #     extra_body = {"reasoning": {"effort": "none"}}
 
         try:
-            response_raw = llm.chat_raw(
-                messages,
-                extra_body={"reasoning": {"effort": "none"}},
-            )
+            if is_reasoning:
+                response_raw = llm.chat_raw(
+                    messages,
+                )
+            else:
+                response_raw = llm.chat_raw(
+                    messages,
+                    extra_body={"reasoning": {"effort": "none"}},
+                )
             llm_response_raw_text = ""
             response = response_raw.parse()
             # add current answer to list
