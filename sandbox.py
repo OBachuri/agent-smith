@@ -359,7 +359,11 @@ class Sandbox:
             request = {
                 "type": "init",
                 "config": self.config.model_dump(),
-                "tools": self.tool_aliases
+                "tools": self.tool_aliases,
+                "tool_parameters": {
+                    name: list((tool.input_schema or {}).get("properties", {}))
+                    for name, tool in self.tool_registry.items()
+                }
             }
 
             self._worker.stdin.write(
@@ -574,21 +578,13 @@ class Sandbox:
 
             truncated = (
                 len(encoded) > max_bytes or
-                len(encoded.decode("utf-8")) > max_chars
+                len(value) > max_chars
             )
 
             if truncated:
-                warning = "\n[MCP output truncated: JSON preview only]"
-                budget_bytes = max(0, max_bytes - len(warning.encode("utf-8")))
-                budget_chars = max(0, max_chars - len(warning))
-
-                preview = encoded[:budget_bytes].decode(
+                value = encoded[:max_bytes].decode(
                     "utf-8", errors="ignore"
-                )[:budget_chars]
-                value = (
-                    preview
-                    + warning
-                )
+                )[:max_chars]
 
             return {
                 "type": "mcp_response",
@@ -723,7 +719,7 @@ class Sandbox:
                     try:
                         response = await self._handle_mcp_request(message)
                         value = response.get("value", {})
-                        if 'result' in value:
+                        if 'result' in value and isinstance(value, dict):
                             response["value"] = value.get("result")
 
                         process.stdin.write(
@@ -768,35 +764,28 @@ class Sandbox:
                     append_output(message.get("error", ""))
                     output = "".join(pieces)
 
-                    if truncated:
+                    if tool_truncated:
+                        output += (
+                            "\n[Sandbox: MCP tool output was truncated "
+                            "due to configured size limits "
+                            "(Maximum characters: "
+                            f"{self.config.max_output_chars} / Maximum bytes: "
+                            f"{self.config.max_output_bytes} bytes)]"
+                        )
+                    elif truncated:
                         output += (
                             "\n[Sandbox: Output truncated due to size limits "
                             "(Maximum characters: "
                             f"{self.config.max_output_chars} / Maximum bytes: "
-                            f"{self.config.max_output_bytes} bytes).]"
+                            f"{self.config.max_output_bytes} bytes)]"
                         )
-
-                    if tool_truncated:
-                        output += (
-                            "\n[Sandbox: MCP tool output was truncated "
-                            "due to configured size limits.]"
-                            "(Maximum characters: "
-                            f"{self.config.max_output_chars} / Maximum bytes: "
-                            f"{self.config.max_output_bytes} bytes).]"
-                        )
-
-                    was_truncated = truncated or tool_truncated
 
                     return SandboxIntermediateResult(
                         success=(status == "success"),
                         tool_name="python",
                         sandbox_output=output,
-                        status=(
-                            "truncated"
-                            if was_truncated and status == "success"
-                            else status
-                        ),
-                        truncated=was_truncated
+                        status=status,
+                        truncated=(truncated or tool_truncated)
                     )
 
                 raise RuntimeError(f"Unexpected worker message: {kind}")
@@ -819,7 +808,7 @@ class Sandbox:
                         "\n[Sandbox: Output truncated due to size limits "
                         "(Maximum characters: "
                         f"{self.config.max_output_chars} / Maximum bytes: "
-                        f"{self.config.max_output_bytes} bytes).]"
+                        f"{self.config.max_output_bytes} bytes)]"
                         if truncated else ""
                     )
                     + (
@@ -827,7 +816,7 @@ class Sandbox:
                         "due to configured size limits.]"
                         "(Maximum characters: "
                         f"{self.config.max_output_chars} / Maximum bytes: "
-                        f"{self.config.max_output_bytes} bytes).]"
+                        f"{self.config.max_output_bytes} bytes)]"
                         if tool_truncated else ""
                     )
                 )
