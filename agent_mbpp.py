@@ -12,6 +12,8 @@ from src.config_model import MBPPTaskInput, StepMetrics, SolutionOutput
 from src.sandbox_connector import SandboxClient
 from src.agent_utils import mpc_arguments_to_python, it_is_python_code
 from src.agent_utils import it_is_tool_call, mpc_result_to_txt
+from src.agent_utils import extract_function_code
+# from src.agent_utils import normalize_json_arguments
 
 from openai.types.chat import ChatCompletionMessageParam
 
@@ -105,11 +107,67 @@ def main(
             help="Maximum steps to solve the task.",
         )
     ] = 5,
+    max_in_tokens: Annotated[
+        int,
+        typer.Option(
+            "--max-in-tokens",
+            min=100,
+            max=900000,
+            help="Maximum input tokens.",
+        )
+    ] = 6000,
+    max_out_tokens: Annotated[
+        int,
+        typer.Option(
+            "--max-out-tokens",
+            min=100,
+            max=100000,
+            help="Maximum output tokens.",
+        )
+    ] = 1500,
+    max_time_s: Annotated[
+        int,
+        typer.Option(
+            "--timeout",
+            min=1,
+            max=2000,
+            help="Timeout - Maximum time in seconds.",
+        )
+    ] = 120,
 
 ) -> None:
 
+    final_test = False
+
     def final_chek(f_str: str) -> str:
-        return f_str
+        nonlocal final_test
+        if "run_tests" not in sandbox_tools_list:
+            #  can`t check solution without this tool
+            return ""
+        sb_call = (
+            'run_tests(\n'
+            f'    code="""{f_str}""",\n'
+            f'    test_list={str(the_task.test_list)}'
+        )
+        if the_task.test_imports:
+            sb_call += f',\n    test_imports={str(the_task.test_imports)}'
+        sb_call += ')'
+
+        # print("final test:", sb_call)
+        result_ = sandbox.run_tool(f"print({sb_call})")
+        tool_result = mpc_result_to_txt(result_.sandbox_output)
+        if result_.success and not (result_.truncated):
+            final_test = True
+            return ""
+        # someting wrong:
+        txt_ = ('{"test_result":\n'
+                f'{str(tool_result)},\n'
+                '"test_run_code":\n'
+                f'{sb_call}\n'
+                "}"
+                )
+        print("!!!!! Final test error:", txt_)
+        return txt_
 
     typer.echo("-"*20)
     typer.echo("Agent Smith CLI (MBPP)")
@@ -226,11 +284,8 @@ def main(
         typer.Exit(code=1)
         return
 
-    if print_debug:
-        print("-"*10, " Sandbox manual:\n", sandbox_manual)
-
-    # t_str = sandbox.request("show_tools()", 5)
-    # print("-- test:", t_str)
+    # if print_debug:
+    #     print("-"*10, " Sandbox manual:\n", sandbox_manual)
 
     try:
         sandbox_tools_list_ = sandbox.run_tool("show_tools()").sandbox_output
@@ -266,23 +321,37 @@ def main(
             "role": "user",
             "content": f"The task: {the_task.task_definition}\n"
             f"Function definition: {the_task.function_definition}\n"
-            "Tests: \n ```" + "\n".join(the_task.test_list) + "```\n",
-
+            "Tests: ```\n" + "\n".join(the_task.test_list) + "\n```\n",
         },
     ]
 
     system_prompt = str(messages)
 
-    # print("-"*10, " Sandbox manual:\n", sandbox_manual)
+    if print_debug:
+        print("-"*10, "Start prompt:")
+        for m_ in messages:
+            for k, v in m_.items():
+                print(f"{k} : \"{str(v).strip()}\" ")
 
     solution = ""
+    error_txt = ""
+    final_test = False
     reasoning = ""
     llm_step_number = 0
     llm_finish = False
-    llm_tested_code = False
+    # llm_tested_code = False
     steps: list[StepMetrics] = []
+    total_input_tokens = 0
+    total_output_tokens = 0
+    python_text: list[str] = []
 
-    while llm_step_number < max_iterations and not llm_finish:
+    while (
+            llm_step_number < max_iterations
+            and not llm_finish
+            and total_input_tokens < max_in_tokens
+            and total_output_tokens < max_out_tokens
+            and (int(time.perf_counter() - start_time) < max_time_s)
+            ):
         llm_step_number += 1
         llm_finish = True
         llm_input_tokens = 0
@@ -297,13 +366,11 @@ def main(
         typer.secho(f"==========  Prompt (step {llm_step_number}):",
                     fg=typer.colors.BLUE)
 
-        print(messages)
+        if print_debug and (llm_step_number > 1):
+            for m_ in messages:
+                print(m_)
 
         llm_start_time = time.perf_counter()
-
-        # extra_body: dict[str, any] = {}
-        # if model_name not in ["stealth/crouton-alpha"]:
-        #     extra_body = {"reasoning": {"effort": "none"}}
 
         try:
             if is_reasoning:
@@ -319,14 +386,6 @@ def main(
             response = response_raw.parse()
             # add current answer to list
             assistant_message = response.choices[0].message
-            messages.append(assistant_message)
-            # print("mmmmmmmmmmm1")
-            # print("msG:",llm_response_raw_text)
-            # print("mmmmmmmmmmm2")
-            # print(f"Status Code: {response_raw.status_code}")
-            # print(f"Headers: {response_raw.headers}")
-            # # print(assistant_message.model_dump_json(indent=2))
-            # print("mmmmmmmmmmm3")
         except Exception as ex:
             typer.secho(
                 "Error: Can`t get llm response'!\n",
@@ -335,6 +394,25 @@ def main(
             sandbox.close()
             typer.Exit(code=1)
             return
+
+        # if response.choices[0].message.get("tool_calls", []):
+        #     # Check if model sent correct tool calls
+        #     # Cohere modeles sometimes send not json as tool arguments
+        #     # Make a mutable copy of the assistant message.
+        #     assistant_message = response.choices[0].message.model_dump(
+        #   exclude_none=True)
+        #     for call in assistant_message.get("tool_calls", []):
+        #         call_id = call["id"]
+        #         tool_name = function["name"]
+        #         function = call.get("function", None)
+        #         if function is None:
+        #             continue
+        #         arg = function.get("arguments", None)
+        #         if arg is None:
+        #             continue
+        #         arg_1 =  normalize_json_arguments(arg)
+
+        messages.append(assistant_message)
 
         llm_finish_time = time.perf_counter()
         llm_retries = llm.retries
@@ -348,6 +426,8 @@ def main(
             print("Output tokens:", usage.completion_tokens)
             print("Total tokens:", usage.total_tokens)
             print("-"*20)
+        total_input_tokens += llm_input_tokens
+        total_output_tokens += llm_output_tokens
 
         msg = response.choices[0].message
         if msg.content:
@@ -359,30 +439,23 @@ def main(
                                       reasoning +
                                       "\n</reasoning>\n")
 
-        print("LLM content:")
-        print(response.choices[0].message.content)
-        # -----------
-        print("+"*10)
-        print("LLM reasoning:")
-        print(reasoning)
+        if print_debug:
+            print("LLM content:")
+            print(response.choices[0].message.content)
+            # -----------
+            print("+"*10)
+            print("LLM reasoning:")
+            print(reasoning)
+            # -----------
+            print("+"*10)
+            print("LLM tool_calls:")
+            print(response.choices[0].message.tool_calls)
 
-        # print("+"*10, "full llm response:")
-        # print(response)
-        # print("------ response.choices[0]:")
-        # print(response.choices[0])
-        print("+"*10)
-
-        # -----------
-        # print("+"*10)
-        print("LLM tool_calls:")
-        print(response.choices[0].message.tool_calls)
-        print("+"*10)
+            print("+"*10)
 
         # If llm request tools via standard interface
         if response.choices[0].message.tool_calls:
             for tool_call in response.choices[0].message.tool_calls:
-                print("-- Tool:", tool_call)
-
                 if tool_call.type == 'function':
                     call_id = str(tool_call.id)
                     tool_name = str(tool_call.function.name).strip()
@@ -431,14 +504,16 @@ def main(
                             continue
 
                     sb_call = f"print({tool_name}({arg_str}))"
-                    print(" - call_id:", call_id)
-                    print(" - call:", sb_call)
+                    if print_debug:
+                        print("Tool call:")
+                        print(" - call_id:", call_id)
+                        print(" - call:", sb_call)
                     sandbox_input += sb_call + "\n"
                     # print("=====", sandbox_input)
                     result_ = sandbox.run_tool(sb_call)
+                    # print("-===:sandbox return:", result_)
                     tool_result = mpc_result_to_txt(result_.sandbox_output)
                     sandbox_output += str(tool_result) + "\n"
-                    print(" - result:", tool_result)
                     messages.append(
                         cast(ChatCompletionMessageParam,
                              {
@@ -446,19 +521,14 @@ def main(
                                 "tool_call_id": call_id,
                                 "content": tool_result
                              }))
-                    # print("*********** message:", messages)
-                    if tool_name == 'run_tests' and result_.success:
-                        print("$$$$$:", tool_result)
-                        llm_tested_code = True
-                        llm_finish = False
-                    elif tool_name == 'final_answer' and result_.success:
-                        solution = str(tool_result)
-                        # the end of task
-                        if not llm_tested_code:
-                            pass  # test in sandbox if LLM not tested it
+                    llm_finish = False
+                    if print_debug:
+                        print(" - result:", tool_result)
+                    # if tool_name == 'run_tests' and result_.success:
+                    #     llm_tested_code = True
+                    if result_.success and result_.final_answer:
+                        solution = str(result_.final_answer)
                         llm_finish = True
-                    else:
-                        llm_finish = False
                 else:
                     print("LLM try to call not supported type of call tool "
                           f"(type={tool_call.type}).")
@@ -467,7 +537,7 @@ def main(
             # for example for model_name: nvidia/nemotron-3.5-super-vl:free
 
             # (a) Python code blocks (primary) — “‘python ... “‘ <end_code>
-            python_text: list[str] = []
+            python_text = []
 
             if response.choices[0].message.content:
                 str_ = str(response.choices[0].message.content).strip()
@@ -514,31 +584,130 @@ def main(
                                 if it_is_python_code(code_txt):
                                     python_text.append(code_txt)
 
+            if not python_text and response.choices[0].message.content:
+                # May be full model answer is Python code
+                str_ = str(response.choices[0].message.content).strip()
+                if it_is_python_code(str_):
+                    python_text.append(str_)
+
             # try to find tools call
             if python_text:
+                # At first look on all blocks as one long Python code
                 code_txt = "\n".join(python_text)
-                tools_ = it_is_tool_call(code_txt, sandbox_tools_list)
-                if tools_:
-                    # try to call sandbox with this code
-                    print("== sandbox call:")
-                    print(code_txt)
-                    print("\n== end of call to sandbox")
-                    result_ = sandbox.run_tool(code_txt)
-                    tool_result = result_.sandbox_output
-                    print("== result:", result_)
-                    print("== end")
-                    if result_.success:
-                        if "final_answer" in tools_:
-                            solution = str(tool_result)
-                            # if not llm_tested_code:
-                            #     pass  # test in sandbox if LLM not tested it
-                            llm_finish = True
-                            continue
-                        messages.append({
-                            "role": "user",
-                            "content": f"Sandbox observation:\n{tool_result}",
-                        })
+                if it_is_python_code(code_txt):
+                    tools_ = it_is_tool_call(code_txt, sandbox_tools_list)
+                    if tools_:
+                        # try to call sandbox with this code
+                        if print_debug:
+                            print("== sandbox call:")
+                            print(code_txt)
+                            print("\n== end of call to sandbox")
+                        sandbox_input += code_txt + "\n"
+                        result_ = sandbox.run_tool(code_txt)
+                        tool_result = mpc_result_to_txt(result_.sandbox_output)
+                        sandbox_output += str(tool_result) + "\n"
+                        if print_debug:
+                            print("== result:", result_, "\n== end")
                         llm_finish = False
+                        if result_.success:
+                            if tool_result:
+                                messages.append({
+                                    "role": "user",
+                                    "content": ("Sandbox answer:\n"
+                                                f"{tool_result}"),
+                                })
+                            else:
+                                messages.append({
+                                    "role": "user",
+                                    "content": ("Sandbox answer: success\n"
+                                                "# Use print() if you need "
+                                                "to receive MCP tool result."),
+                                })
+                            if result_.final_answer:
+                                solution = str(result_.final_answer)
+                                llm_finish = True
+                        else:
+                            messages.append({
+                                "role": "user",
+                                "content": ("Sandbox call error:\n"
+                                            f"{tool_result}"),
+                            })
+                    else:
+                        # Perhaps an LLM does not call tools,
+                        # but rather proposes solutions.
+                        txt_code_solution = extract_function_code(
+                            code_txt,
+                            str(the_task.function_definition).strip())
+
+                        if txt_code_solution:
+                            solution = txt_code_solution
+                            llm_finish = True
+                else:
+                    # try to find one block with tool call or solution
+                    for code_txt in python_text:
+                        tools_ = it_is_tool_call(code_txt, sandbox_tools_list)
+                        if tools_:
+                            # try to call sandbox with this code
+                            if print_debug:
+                                print("== sandbox call:")
+                                print(code_txt)
+                                print("\n== end of call to sandbox")
+                            sandbox_input += code_txt + "\n"
+                            result_ = sandbox.run_tool(code_txt)
+                            tool_result = mpc_result_to_txt(
+                                result_.sandbox_output)
+                            sandbox_output += str(tool_result) + "\n"
+                            if print_debug:
+                                print("== result:", result_, "\n== end")
+                            llm_finish = False
+                            if result_.success:
+                                if tool_result:
+                                    messages.append({
+                                        "role": "user",
+                                        "content": ("Sandbox answer:\n"
+                                                    f"{tool_result}"),
+                                    })
+                                else:
+                                    messages.append({
+                                        "role": "user",
+                                        "content": ("Sandbox answer: success\n"
+                                                    "# Use print() if you need"
+                                                    " to receive MCP tool "
+                                                    " result."),
+                                    })
+                                if result_.final_answer:
+                                    solution = str(result_.final_answer)
+                                    llm_finish = True
+                            else:
+                                messages.append({
+                                    "role": "user",
+                                    "content": ("Sandbox call error:\n"
+                                                f"{tool_result}"),
+                                })
+                            break
+                        else:
+                            # Perhaps an LLM does not call tools,
+                            # but rather proposes solutions.
+                            txt_code_solution = extract_function_code(
+                                code_txt,
+                                str(the_task.function_definition).strip())
+                            if txt_code_solution:
+                                solution = txt_code_solution
+                                llm_finish = True
+                                break
+
+        if solution and llm_finish:
+            test_ = final_chek(solution)
+            if test_:   # something wrong
+                messages.append(
+                    cast(ChatCompletionMessageParam,
+                         {
+                            "role": "user",
+                            "content": ("The solution did not pass" +
+                                        "the final test:\n" +
+                                        str(test_).strip())
+                         }))
+                llm_finish = False
 
         # Calculate duration in milliseconds accurately
         llm_duration = int((llm_finish_time - llm_start_time) * 1000)
@@ -555,10 +724,23 @@ def main(
             retries=llm_retries
             )
         steps.append(current_step)
-        print("==== ", current_step)
+        # print("==== ", current_step)
+
+    # The last try to find solution in the last LLM response
+    if (not solution) and python_text:
+        code_txt = "\n".join(python_text)
+        txt_code_solution = extract_function_code(
+            code_txt,
+            str(the_task.function_definition).strip())
+        if txt_code_solution:
+            solution = txt_code_solution
+            final_chek(solution)
 
     # -----------
     # -----------
+    if print_debug:
+        typer.echo("-"*20)
+
     typer.echo("✅ Done!")
     typer.echo(f"  Steps: {llm_step_number}")
     end_time = time.perf_counter()
@@ -566,24 +748,42 @@ def main(
     duration = int(end_time - start_time)
     typer.echo(f"⏱ Execution time: {duration // 60}:{duration % 60}"
                " (minutes:seconds)")
+    typer.echo(f"  Input tokens: {total_input_tokens}")
+    typer.echo(f"  Output tokens:, {total_output_tokens}")
+
+    final_success = False
+    if not solution:
+        error_txt += "Error - The solution was not provided!\n"
+        if llm_step_number >= max_iterations:
+            error_txt += "Maximum number of iterations reached!\n"
+    elif not final_test:
+        error_txt += "Error - Can not check the solution!\n"
+    else:
+        final_success = True
+    if total_input_tokens > max_in_tokens:
+        error_txt += "Maximum number of input tokens reached!\n"
+    if total_output_tokens > max_out_tokens:
+        error_txt += "Maximum number of output tokens reached!\n"
+
     typer.echo("-"*20)
     sandbox.close()
+
     task_solution = SolutionOutput(
         task_id=str(the_task.task_id),
         benchmark='mbpp',
-        success=llm_tested_code,
+        success=final_success,
         solution=solution,
         iterations=llm_step_number,
         steps=steps,
         total_requests=0,  # !!!
-        total_input_tokens=0,
-        total_output_tokens=0,
+        total_input_tokens=total_input_tokens,
+        total_output_tokens=total_output_tokens,
         total_time_seconds=duration,
-        system_prompt=system_prompt
+        system_prompt=system_prompt,
+        error=error_txt,
     )
 
     # output
-
     # print("output:", task_solution)
 
     try:
