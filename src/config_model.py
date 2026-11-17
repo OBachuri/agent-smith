@@ -77,7 +77,6 @@ class SandboxIntermediateResult(BaseModel):
             "success",
             "error",
             "timeout",
-            "truncated",
             "syntax_error",
             "no_code",
             "recovered_code",
@@ -88,7 +87,6 @@ class SandboxIntermediateResult(BaseModel):
         ]
     ] = None
 
-    # partial: bool = False
     truncated: bool = False
     final_answer: Optional[str] = None
     code_recovered: bool = False
