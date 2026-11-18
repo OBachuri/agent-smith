@@ -4,6 +4,51 @@ import ast
 import re
 
 
+def normalize_json_arguments(raw: Any) -> dict[str, Any]:
+    """Convert model tool arguments into a Python dictionary."""
+
+    # Some providers return a dictionary instead of a JSON string.
+    if isinstance(raw, dict):
+        return raw
+
+    if not isinstance(raw, str):
+        raise ValueError(
+            "Arguments must be a string(json) or dict,"
+            f"got {type(raw).__name__}"
+        )
+
+    text = raw.strip()
+
+    # Remove Markdown code fences.
+    text = re.sub(
+        r"^```(?:json|python)?\s*|\s*```$",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    ).strip()
+
+    if not text:
+        raise ValueError("Empty tool arguments")
+
+    # Standard JSON parsing.
+    try:
+        result = json.loads(text)
+    except json.JSONDecodeError:
+        # Safe fallback for Python dictionary literals:
+        # single quotes, True, False, None, etc.
+        try:
+            result = ast.literal_eval(text)
+        except (ValueError, SyntaxError):
+            raise ValueError(
+                f"Cannot parse tool arguments: {text[:500]}"
+            )
+
+    if not isinstance(result, dict):
+        raise ValueError("Tool arguments must be a JSON object")
+
+    return result
+
+
 def mpc_arguments_to_python(arg_json: str) -> str:
     """ Convert list of function argument from json in Python style """
 
@@ -69,6 +114,8 @@ def mpc_arguments_to_python(arg_json: str) -> str:
 
 
 def it_is_python_code(txt: str) -> bool:
+    """ Check if in text Python code"""
+
     if not txt or txt.strip() == '':
         return False
     try:
@@ -84,6 +131,8 @@ def it_is_python_code(txt: str) -> bool:
 
 
 def it_is_tool_call(code_txt: str, func_lst: list[str]) -> list[str]:
+
+    """ Check if in text Python code with tool call"""
 
     # First try to find with text search
 
@@ -127,3 +176,65 @@ def mpc_result_to_txt(r_str: str | list[str]) -> str | list[str]:
         except Exception:
             return r_str
     return r_str
+
+
+def has_function_def(txt_code: str, function_definition: str) -> bool:
+    try:
+        # 1. Parse the target definition
+        # (add 'pass' so it becomes valid syntax)
+        target_tree = ast.parse(function_definition.strip() + "\n    pass")
+        target_func = target_tree.body[0]
+
+        # Ensure the provided definition is actually a function
+        if not isinstance(target_func, ast.FunctionDef):
+            return False
+
+        # 2. Parse the code you want to check (verifies it is valid Python)
+        code_tree = ast.parse(txt_code)
+    except SyntaxError:
+        # Returns False if txt_code or function_definition is invalid Python
+        return False
+
+    # Extract target name and parameter names
+    target_name = target_func.name
+    target_args = [arg.arg for arg in target_func.args.args]
+
+    # 3. Walk through the code's AST to find a matching function definition
+    for node in ast.walk(code_tree):
+        if (isinstance(node, ast.FunctionDef)
+           or isinstance(node, ast.AsyncFunctionDef)):
+            node_args = [arg.arg for arg in node.args.args]
+            if node.name == target_name and node_args == target_args:
+                return True
+
+    return False
+
+
+def extract_function_code(txt_code: str, function_definition: str) -> str:
+    try:
+        # 1. Parse the target definition
+        target_tree = ast.parse(function_definition.strip() + "\n    pass")
+        target_func = target_tree.body[0]
+
+        if not isinstance(target_func, ast.FunctionDef):
+            return ""
+
+        # 2. Parse the full code string
+        code_tree = ast.parse(txt_code)
+    except SyntaxError:
+        return ""
+
+    target_name = target_func.name
+    target_args = [arg.arg for arg in target_func.args.args]
+
+    # 3. Find the matching function and extract its exact source text
+    for node in ast.walk(code_tree):
+        if (isinstance(node, ast.FunctionDef)
+           or isinstance(node, ast.AsyncFunctionDef)):
+            node_args = [arg.arg for arg in node.args.args]
+            if node.name == target_name and node_args == target_args:
+                # Extracts the exact code block of the function from txt_code
+                extracted = ast.get_source_segment(txt_code, node)
+                return extracted if extracted is not None else ""
+
+    return ""

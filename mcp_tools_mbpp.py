@@ -76,12 +76,15 @@ def create_server(config: SandboxConfig | None = None) -> FastMCP:
     server.tool(
         MBPPTools(config).run_tests,
         description=(
-            "Test a candidate against supplied assertions in the Deno sandbox."
-            "\n\nOptional test_imports run before the solution "
+            "Test a candidate code against supplied assertions "
+            "in the Deno sandbox."
+            "\nOptional test_imports run before the solution "
             "and assertions.\n"
             "Returns JSON with success and output, "
             "including setup/test errors.\n"
-            "Limits come from server configuration. No hidden tests are read."
+            "Limits come from server configuration. "
+            "No hidden tests are read.\n"
+            "Example of test_imports: [\"import math\"]\n"
         ),
     )
     server.resource(
