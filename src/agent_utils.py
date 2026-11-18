@@ -4,6 +4,19 @@ import ast
 import re
 
 
+def check_str_is_json_dict(raw: Any) -> bool:
+    if not isinstance(raw, str):
+        return False
+
+    text = raw.strip()
+    # Standard JSON parsing.
+    try:
+        result = json.loads(text)
+    except json.JSONDecodeError:
+        return False
+    return isinstance(result, dict)
+
+
 def normalize_json_arguments(raw: Any) -> dict[str, Any]:
     """Convert model tool arguments into a Python dictionary."""
 
@@ -13,13 +26,13 @@ def normalize_json_arguments(raw: Any) -> dict[str, Any]:
 
     if not isinstance(raw, str):
         raise ValueError(
-            "Arguments must be a string(json) or dict,"
+            "Arguments must be a string(json), "
             f"got {type(raw).__name__}"
         )
 
     text = raw.strip()
 
-    # Remove Markdown code fences.
+    # Remove Markdown code fences at the beginning and the end
     text = re.sub(
         r"^```(?:json|python)?\s*|\s*```$",
         "",
@@ -28,61 +41,31 @@ def normalize_json_arguments(raw: Any) -> dict[str, Any]:
     ).strip()
 
     if not text:
-        raise ValueError("Empty tool arguments")
+        # raise ValueError("Empty tool arguments")
+        return {}
+
+    result: dict[str, Any] = {}
+    error: str = ""
 
     # Standard JSON parsing.
     try:
         result = json.loads(text)
-    except json.JSONDecodeError:
-        # Safe fallback for Python dictionary literals:
-        # single quotes, True, False, None, etc.
-        try:
-            result = ast.literal_eval(text)
-        except (ValueError, SyntaxError):
-            raise ValueError(
-                f"Cannot parse tool arguments: {text[:500]}"
-            )
+    except json.JSONDecodeError as ex:
+        error += f'{ex}\n'
 
-    if not isinstance(result, dict):
-        raise ValueError("Tool arguments must be a JSON object")
-
-    return result
-
-
-def mpc_arguments_to_python(arg_json: str) -> str:
-    """ Convert list of function argument from json in Python style """
-
-    if not arg_json:
-        return ""
-
-    arg_json = arg_json.strip()
-    if not arg_json:
-        return ""
-
-    arg_str = ""
-    data: dict[str, Any] = {}
-    try:
-        data = json.loads(arg_json)
-    except Exception:
-        if arg_json[-2:] == "}}":
-            arg_json_ = arg_json[:-1]
-        elif arg_json[-4:] == "}}\n]":
-            arg_json_ = arg_json[:-3]
-    if not data:
-        try:
-            data = json.loads(arg_json_)
-        except Exception:
-            pass
-    if not data:
-        start = arg_json.find("{")
+    if not result:
+        # try to find {}
+        start = text.find("{")
         if start == -1:
-            print(f"Error convert json to dict: json='{arg_json}'"
-                  ', error=Not fond "{" ')
-            return ""
+            error += ("Error convert json to dict -"
+                      'Not fond "{"\n'
+                      f'json={text[:500]}')
+            raise ValueError(error)
+
         depth, end = 0, 0
         in_str = False
-        for i, ch in enumerate(arg_json[start:], start):
-            if ch == '"' and arg_json[i-1] != '\\':
+        for i, ch in enumerate(text[start:], start):
+            if ch == '"' and text[i-1] != '\\':
                 in_str = not in_str
             elif not in_str:
                 if ch == '{':
@@ -93,13 +76,48 @@ def mpc_arguments_to_python(arg_json: str) -> str:
                         end = i + 1
                         break
         if end == 0:
-            print(f"Error convert json to dict: json='{arg_json}'")
-            return ""
+            # error += ("Error convert json to dict -"
+            #           'Not fond "}"\n'
+            #           f'json={text[:500]}')
+            # raise ValueError(error)
+            text += "}"*(depth)
+            end = len(text)
+        text = text[start:end]
+        # print("edit_text:",text)
+
+    # Second try as standard JSON parsing.
+    try:
+        result = json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    if not result:
+        # Safe fallback for Python dictionary literals:
+        # single quotes, True, False, None, etc.
         try:
-            data = json.loads(arg_json[start:end])
-        except Exception as ex:
-            print(f"Error convert json to dict: json='{arg_json}', error={ex}")
-            return ""
+            result = ast.literal_eval(text)
+        except (ValueError, SyntaxError):
+            pass
+
+    if not isinstance(result, dict):
+        raise ValueError("Tool arguments must be a JSON object")
+
+    return result
+
+
+def mpc_arguments_to_python(arg_json: Any) -> str:
+    """ Convert list of function argument from json in Python style """
+
+    if not arg_json:
+        return ""
+
+    try:
+        data = normalize_json_arguments(arg_json)
+    except Exception as ex:
+        print("Error parse arguments as json:", ex, "\n", arg_json)
+        return ""
+
+    arg_str: str = ""
 
     if data:
         for d_key in data.keys():
@@ -110,6 +128,7 @@ def mpc_arguments_to_python(arg_json: str) -> str:
                 arg_str += d_key + "=None"
             else:
                 arg_str += d_key + "=" + json.dumps(d)
+
     return arg_str
 
 

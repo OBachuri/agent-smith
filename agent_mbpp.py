@@ -13,7 +13,7 @@ from src.sandbox_connector import SandboxClient
 from src.agent_utils import mpc_arguments_to_python, it_is_python_code
 from src.agent_utils import it_is_tool_call, mpc_result_to_txt
 from src.agent_utils import extract_function_code
-# from src.agent_utils import normalize_json_arguments
+from src.agent_utils import normalize_json_arguments, check_str_is_json_dict
 
 from openai.types.chat import ChatCompletionMessageParam
 
@@ -395,22 +395,35 @@ def main(
             typer.Exit(code=1)
             return
 
-        # if response.choices[0].message.get("tool_calls", []):
-        #     # Check if model sent correct tool calls
-        #     # Cohere modeles sometimes send not json as tool arguments
-        #     # Make a mutable copy of the assistant message.
-        #     assistant_message = response.choices[0].message.model_dump(
-        #   exclude_none=True)
-        #     for call in assistant_message.get("tool_calls", []):
-        #         call_id = call["id"]
-        #         tool_name = function["name"]
-        #         function = call.get("function", None)
-        #         if function is None:
-        #             continue
-        #         arg = function.get("arguments", None)
-        #         if arg is None:
-        #             continue
-        #         arg_1 =  normalize_json_arguments(arg)
+        if response.choices[0].message.tool_calls:
+            # Check if model sent correct tool calls
+            # Cohere modeles sometimes send not json as tool arguments
+
+            # Make a mutable copy of the assistant message.
+            assistant_message = response.choices[0].message.model_dump(
+                exclude_none=True)
+            for call in response.choices[0].message.tool_calls:
+                if call.type != 'function':
+                    continue
+                call_id = call.id
+                function = call.function
+                if function is None:
+                    continue
+                tool_name = function.name
+                arg = function.arguments
+                if arg is None:
+                    continue
+                arg = str(arg).strip()
+                if check_str_is_json_dict(arg):
+                    continue
+                try:
+                    arg_dict = normalize_json_arguments(arg)
+                    # Always store normalized JSON string arguments.
+                    function.arguments = json.dumps(
+                        arg_dict, ensure_ascii=False)
+                    print("test func arg:", function.arguments)
+                except Exception:
+                    function.arguments = "{}"
 
         messages.append(assistant_message)
 
@@ -741,7 +754,7 @@ def main(
     if print_debug:
         typer.echo("-"*20)
 
-    typer.echo("✅ Done!")
+    typer.echo("✔ Done!")
     typer.echo(f"  Steps: {llm_step_number}")
     end_time = time.perf_counter()
     # Calculate duration
@@ -749,7 +762,7 @@ def main(
     typer.echo(f"⏱ Execution time: {duration // 60}:{duration % 60}"
                " (minutes:seconds)")
     typer.echo(f"  Input tokens: {total_input_tokens}")
-    typer.echo(f"  Output tokens:, {total_output_tokens}")
+    typer.echo(f"  Output tokens: {total_output_tokens}")
 
     final_success = False
     if not solution:
@@ -764,6 +777,11 @@ def main(
         error_txt += "Maximum number of input tokens reached!\n"
     if total_output_tokens > max_out_tokens:
         error_txt += "Maximum number of output tokens reached!\n"
+
+    if final_success:
+        typer.echo('✅ Result: Success')
+    else:
+        typer.echo(f'❌ Result: {error_txt}')
 
     typer.echo("-"*20)
     sandbox.close()
