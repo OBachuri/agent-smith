@@ -4,7 +4,7 @@ import os
 import json
 from dotenv import load_dotenv, dotenv_values
 from pathlib import Path
-from typing import Annotated, cast
+from typing import Annotated, cast, Any
 import typer
 
 from src.llm_connector import ProviderConfig, LLMConnector
@@ -57,14 +57,14 @@ def main(
             "--model-name",
             help="LLM Model name"
         )
-    ],
+    ] = "",
     provider_url: Annotated[
         str,
         typer.Option(
             "--provider-url",
             help="Provider API URL."
         )
-    ],
+    ] = "",
     provider_api_key: Annotated[
         list[str],
         typer.Option(
@@ -134,6 +134,23 @@ def main(
             help="Timeout - Maximum time in seconds.",
         )
     ] = 120,
+    tool_sandbox: Annotated[
+        bool,
+        typer.Option(
+            "--tool-sandbox",
+            help=("Expose to LLM "
+                  "\"execute_sandbox(python_code:str)\""
+                  " in standart tools list."),
+        )
+    ] = False,
+    disable_tool_validation: Annotated[
+        bool,
+        typer.Option(
+            "--disable-tool-validation",
+            help=("Not generate error "
+                  "if LLM try to call tool not from tools list."),
+        )
+    ] = False,
 
 ) -> None:
 
@@ -146,7 +163,7 @@ def main(
             return ""
         sb_call = (
             'run_tests(\n'
-            f'    code="""{f_str}""",\n'
+            f'    code={repr(f_str)},\n'
             f'    test_list={str(the_task.test_list)}'
         )
         if the_task.test_imports:
@@ -173,10 +190,6 @@ def main(
     typer.echo("Agent Smith CLI (MBPP)")
     typer.echo(f"📂 Task file: {task_file}")
     typer.echo(f"📥 Output file: {output}")
-    typer.echo(f"🤖 Model name: {model_name}")
-    typer.echo(f"🌐 Provider URL: {provider_url}")
-    typer.echo(f"Print debug: {print_debug}")
-    typer.echo("-"*20)
 
     if not provider_api_key:
         if provider_api_keys_file is not None:
@@ -233,8 +246,37 @@ def main(
         typer.Exit(code=1)
         return
 
+    if not provider_url:
+        provider_url = os.getenv("LLM_PROVIDER_URL", "")
+        if not provider_url:
+            load_dotenv()
+            provider_url = os.getenv("LLM_PROVIDER_URL", "")
+    if not provider_url:
+        typer.secho("Error: Missing LLM_PROVIDER_URL!",
+                    fg=typer.colors.RED, err=True)
+        typer.Exit(code=1)
+        return
+
+    if not model_name:
+        model_name = os.getenv("LLM_MODEL",
+                               os.getenv("LLM_MODEL_NAME", ""))
+        if not model_name:
+            load_dotenv()
+            model_name = os.getenv("LLM_MODEL",
+                                   os.getenv("LLM_MODEL_NAME", ""))
+    if not provider_url:
+        typer.secho("Error: Missing LLM_MODEL_NAME!",
+                    fg=typer.colors.RED, err=True)
+        typer.Exit(code=1)
+        return
+
+    typer.echo(f"🤖 Model name: {model_name}")
+    typer.echo(f"🌐 Provider URL: {provider_url}")
+    typer.echo(f" Print debug: {print_debug}")
+    typer.echo("-"*20)
+
     provider = ProviderConfig(
-        name=os.getenv("LLM_PROVIDER_NAME", "Provider 1"),
+        name=os.getenv("LLM_PROVIDER_NAME", f"Provider({provider_url})"),
         base_url=provider_url,
         model=model_name,
         api_keys=api_keys
@@ -252,9 +294,6 @@ def main(
                     fg=typer.colors.RED, err=True)
         typer.Exit(code=1)
         return
-
-    # print("Task:", the_task)
-    # print("-"*20)
 
     try:
         llm = LLMConnector(provider)
@@ -284,9 +323,6 @@ def main(
         typer.Exit(code=1)
         return
 
-    # if print_debug:
-    #     print("-"*10, " Sandbox manual:\n", sandbox_manual)
-
     try:
         sandbox_tools_list_ = sandbox.run_tool("show_tools()").sandbox_output
     except Exception as ex:
@@ -309,6 +345,35 @@ def main(
     start_time = time.perf_counter()
     typer.echo("🚀 Start...")
     # ----------- assistant
+
+    if tool_sandbox:
+        tools_list = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "execute_sandbox",
+                    "description": (
+                        "Execute MCP function as Python code in the sandbox. "
+                        "The code can call multiple MCP functions."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "code": {
+                                "type": "string",
+                                "description": (
+                                    "Python code to execute in the sandbox"
+                                )
+                            }
+                        },
+                        "required": ["code"],
+                        "additionalProperties": False
+                    }
+                }
+            }
+        ]
+    else:
+        tools_list = []
 
     messages: list[ChatCompletionMessageParam] = [
         {
@@ -371,16 +436,23 @@ def main(
                 print(m_)
 
         llm_start_time = time.perf_counter()
+        extra_body: dict[str, Any] = {}
+        if not is_reasoning:
+            extra_body = {"reasoning": {"effort": "none"}}
+        if disable_tool_validation:
+            extra_body["disable_tool_validation"] = True
 
         try:
-            if is_reasoning:
+            if extra_body:
                 response_raw = llm.chat_raw(
                     messages,
+                    tools=tools_list,
+                    extra_body=extra_body,
                 )
             else:
                 response_raw = llm.chat_raw(
                     messages,
-                    extra_body={"reasoning": {"effort": "none"}},
+                    tools=tools_list,
                 )
             llm_response_raw_text = ""
             response = response_raw.parse()
@@ -481,7 +553,8 @@ def main(
                             "  Arguments: "
                             f"{tool_call.function.arguments}\n")
                     llm_response_raw_text += "</tool_call>\n"
-                    if tool_name not in sandbox_tools_list:
+                    if ((tool_name not in sandbox_tools_list
+                         and tool_name != 'execute_sandbox')):
                         print(f"Tool (name={tool_name}) not found!")
                         messages.append(
                             cast(ChatCompletionMessageParam,
@@ -494,8 +567,35 @@ def main(
                         llm_finish = False
                         continue
                     arg_str = ""
-                    if (tool_call.function.arguments
-                       and tool_call.function.arguments.strip()):
+                    if tool_name == 'execute_sandbox':
+                        try:
+                            arg_dict = normalize_json_arguments(
+                                tool_call.function.arguments)
+                        except Exception:
+                            arg_dict = {}
+                        arg_str = arg_dict.get("code", "")
+                        if arg_str and it_is_python_code(arg_str):
+                            sb_call = arg_str
+                        else:
+                            messages.append(
+                                cast(
+                                    ChatCompletionMessageParam,
+                                    {
+                                        "role": "tool",
+                                        "tool_call_id": call_id,
+                                        "content": (
+                                            "Error: parsing tool "
+                                            "arguments.\n"
+                                            f'tool_name="{tool_name}",\n'
+                                            'as arguments "code" must be '
+                                            'Python style call of function'
+                                            f'from list: {sandbox_tools_list}"'
+                                            )
+                                    }))
+                            llm_finish = False
+                            continue
+                    elif (tool_call.function.arguments
+                          and tool_call.function.arguments.strip()):
                         arg_str = mpc_arguments_to_python(
                             tool_call.function.arguments)
                         if not arg_str:
@@ -515,8 +615,8 @@ def main(
                                     }))
                             llm_finish = False
                             continue
-
-                    sb_call = f"print({tool_name}({arg_str}))"
+                    if tool_name != 'execute_sandbox':
+                        sb_call = f"print({tool_name}({arg_str}))"
                     if print_debug:
                         print("Tool call:")
                         print(" - call_id:", call_id)
