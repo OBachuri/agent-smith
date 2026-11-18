@@ -764,6 +764,9 @@ class Sandbox:
                     append_output(message.get("error", ""))
                     output = "".join(pieces)
 
+                    if status == "success" and not output:
+                        output = "Execution completed successfully (no output)"
+
                     if tool_truncated:
                         output += (
                             "\n[Sandbox: MCP tool output was truncated "
