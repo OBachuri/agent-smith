@@ -42,7 +42,7 @@ run:
 
 	uv run python -m agent_mbpp --task-file cache/mbpp_task.json \
 		--output cache/mbpp_solution.json \
-		--model-name "cohere/north-mini-code:free" \
+		--model-name "nvidia/nemotron-3.5-lightning:free" \
 		--provider-url "https://openrouter.ai/api/v1" \
 		--print-debug
 

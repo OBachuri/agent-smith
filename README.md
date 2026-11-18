@@ -175,6 +175,9 @@ Run `make test-docker` for real container, patch and cleanup checks.
 - MCP Server/Client architecture https://modelcontextprotocol.io/docs/2026-07-28/learn/architecture 
 - OpenAI-compatible chat completions API documentation: https://platform.openai.com/docs/api-reference/chat
 
+### LLM API Providers:
+- Openrouter: https://openrouter.ai
+- Groq:  https://console.groq.com/docs/
 
 ### AI Usage
 
