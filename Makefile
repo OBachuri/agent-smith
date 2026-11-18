@@ -42,7 +42,7 @@ run:
 
 	uv run python -m agent_mbpp --task-file cache/mbpp_task.json \
 		--output cache/mbpp_solution.json \
-		--model-name "nvidia/nemotron-3.5-lightning:free" \
+		--model-name "nvidia/nemotron-3.5-super-vl:free" \
 		--provider-url "https://openrouter.ai/api/v1" \
 		--print-debug
 
@@ -55,7 +55,6 @@ run:
 # 		"cohere/north-mini-code:free" -- call MCP tool  !!!!!! 1
 # 		"nvidia/nemotron-3.5-super-vl:free"  - call in python style, but every time new answer
 #		"stealth/crouton-alpha"
-
 
 
 debug:
