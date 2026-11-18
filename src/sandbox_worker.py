@@ -4,6 +4,7 @@ import contextlib
 import json
 import os
 import sys
+import ast
 import traceback
 import importlib.util
 from pathlib import Path
@@ -246,7 +247,33 @@ def execute(code: str, namespace: dict) -> None:
             contextlib.redirect_stdout(OutputStream("stdout")),
             contextlib.redirect_stderr(OutputStream("stderr"))
         ):
-            exec(compile(code, "<sandbox>", "exec"), namespace, namespace)
+            tree = ast.parse(code, "<sandbox>", "exec")
+
+            if tree.body and isinstance(tree.body[-1], ast.Expr):
+                last_expression = tree.body[-1]
+                tree.body.pop()
+
+                if tree.body:
+                    exec(
+                        compile(tree, "<sandbox>", "exec"),
+                        namespace,
+                        namespace
+                    )
+
+                value = eval(
+                    compile(
+                        ast.Expression(last_expression.value),
+                        "<sandbox>",
+                        "eval"
+                    ),
+                    namespace,
+                    namespace
+                )
+
+                if value is not None:
+                    print(json.dumps(value, ensure_ascii=False, default=str))
+            else:
+                exec(compile(tree, "<sandbox>", "exec"), namespace, namespace)
 
     except FinalAnswerSignal as exc:
         send(
