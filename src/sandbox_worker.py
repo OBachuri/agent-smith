@@ -304,18 +304,22 @@ def execute(code: str, namespace: dict) -> None:
             )
         })
     except Exception as exc:
-        tb = exc.__traceback__
-        while tb and tb.tb_next:
-            tb = tb.tb_next
-        line_nbr = tb.tb_lineno if tb else None
+        frames = traceback.extract_tb(exc.__traceback__)
+
+        line_nbr = next(
+            (
+                frame.lineno for frame in reversed(frames)
+                if frame.filename == "<sandbox>"
+            ),
+            None
+        )
+
+        location = f"(line {line_nbr})" if line_nbr is not None else ""
 
         send({
             "type": "result",
             "status": "error",
-            "error": (
-                f"{type(exc).__name__}: {exc}"
-                f" (line {line_nbr})"
-            )
+            "error": (f"{type(exc).__name__}: {exc} {location}")
         })
     else:
         send({"type": "result", "status": "success"})
