@@ -1,3 +1,5 @@
+# Agent Smith CLI (MBPP)
+
 import sys
 import time
 import os
@@ -379,7 +381,6 @@ def main(
                     "name": "execute_sandbox",
                     "description": (
                         "Execute MCP function as Python code in the sandbox. "
-                        "The code can call multiple MCP functions."
                     ),
                     "parameters": {
                         "type": "object",

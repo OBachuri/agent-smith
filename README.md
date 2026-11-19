@@ -69,8 +69,12 @@ the supplied code and assertions. MBPP does not use Docker. Downloads happen
 during installation; test calls need no network access, model API keys or
 benchmark datasets.
 
+
 ```bash
-# stdio: the MCP client launches this command
+# To get list of available tools
+uv run fastmcp list mcp_tools_mbpp.py
+
+# Run stdio: the MCP client launches this command
 uv run python mcp_tools_mbpp.py --sandbox-config src/sandbox_template.json
 
 # Streamable HTTP: connect to http://127.0.0.1:8000/mcp
@@ -144,6 +148,12 @@ explicitly. CI installs the assets and runs the real executor and MCP transport
 checks without Docker.
 
 ### SWE-bench tools
+
+```bash
+# To get list of available tools
+uv run fastmcp list mcp_tools_swebench.py
+```
+
 
 Set `TESTBED_PATH` to the repository to inspect and start the server with
 no arguments:

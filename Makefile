@@ -58,6 +58,14 @@ run:
 # 		"nvidia/nemotron-3.5-super-vl:free"  - call in python style, but every time new answer
 #		"stealth/crouton-alpha"
 
+run-s:
+
+	uv run python -m agent_swebench --task-file cache/swebench_task.json \
+		--output cache/mbpp_solution.json \
+		--model-name "cohere/north-mini-code:free" \
+		--provider-url "https://openrouter.ai/api/v1" \
+		--print-debug 
+
 
 debug:
 	uv run python -m pdb -m src
@@ -136,6 +144,6 @@ list-swe:
 	uv run fastmcp list mcp_tools_swebench.py  --resources --prompts
 
 
-.PHONY: install run debug clean format lint lint-strict flake8 mypy test test-docker fclean runapi check-venv venv list-mbpp list-swe
+.PHONY: install run debug clean format lint lint-strict flake8 mypy test test-docker fclean runapi check-venv venv list-mbpp list-swe run-s
 
 #  ln -s ~/goinfre/uv uv
