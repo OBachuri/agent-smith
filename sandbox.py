@@ -958,7 +958,6 @@ class Sandbox:
                 # Execute raw Python code
                 else:
                     result = await self.run_python(data)
-                print(f"Terminal mode: {terminal_mode}", file=sys.stderr)
 
             except (KeyboardInterrupt, SystemExit):
                 raise
