@@ -61,7 +61,7 @@ run:
 run-s:
 
 	uv run python -m agent_swebench --task-file cache/swebench_task.json \
-		--output cache/mbpp_solution.json \
+		--output cache/swebenc_solution.json \
 		--model-name "cohere/north-mini-code:free" \
 		--provider-url "https://openrouter.ai/api/v1" \
 		--print-debug 
