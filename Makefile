@@ -44,8 +44,10 @@ run:
 		--output cache/mbpp_solution.json \
 		--model-name "nvidia/nemotron-3.5-super-vl:free" \
 		--provider-url "https://openrouter.ai/api/v1" \
-		--print-debug
+		--print-debug 
 
+#		--print-model-list
+#
 #		--provider-api-keys-file "cache/mbpp_task.json" 
 # 		--provider-api-key "1 zsdfsd" \
 # 		--provider-api-key "2 zsdfsd"
