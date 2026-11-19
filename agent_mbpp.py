@@ -151,6 +151,13 @@ def main(
                   "if LLM try to call tool not from tools list."),
         )
     ] = False,
+    print_model_list: Annotated[
+        bool,
+        typer.Option(
+            "--print-model-list",
+            help=("Print Provider model list."),
+        )
+    ] = False,
 
 ) -> None:
 
@@ -264,11 +271,6 @@ def main(
             load_dotenv()
             model_name = os.getenv("LLM_MODEL",
                                    os.getenv("LLM_MODEL_NAME", ""))
-    if not provider_url:
-        typer.secho("Error: Missing LLM_MODEL_NAME!",
-                    fg=typer.colors.RED, err=True)
-        typer.Exit(code=1)
-        return
 
     typer.echo(f"🤖 Model name: {model_name}")
     typer.echo(f"🌐 Provider URL: {provider_url}")
@@ -282,8 +284,40 @@ def main(
         api_keys=api_keys
     )
 
-    # print("Provider param:", provider)
-    # print("Keys:", provider.api_keys)
+    # connect to LLM Provide
+    try:
+        llm = LLMConnector(provider)
+    except Exception as ex:
+        typer.secho(
+            f"Error: Can`t connect to LLM Provider ({provider})'!\n{ex}",
+            fg=typer.colors.RED, err=True)
+        typer.Exit(code=1)
+        return
+
+    if print_model_list:
+        print("-"*10, " Provider model list:")
+        i = 1
+        for lm_ in llm.model_list():
+            print(f"\n{i}): ", lm_.id)
+            print(lm_)
+            i += 1
+        print("-"*20)
+        if not model_name:
+            typer.echo(
+                "Specify the LLM model name using "
+                "the --model-name parameter or the "
+                "LLM_MODEL_NAME variable!")
+            return
+
+    if not model_name:
+        typer.secho("Error: Missing LLM_MODEL_NAME!",
+                    fg=typer.colors.RED, err=True)
+        typer.echo(
+            "Specify the LLM model name using "
+            "the --model-name parameter or the "
+            "LLM_MODEL_NAME variable!")
+        typer.Exit(code=1)
+        return
 
     # read the task from file
     try:
@@ -292,15 +326,6 @@ def main(
     except Exception as ex:
         typer.secho(f"Error: Can't read task from file '{task_file}'!\n{ex}",
                     fg=typer.colors.RED, err=True)
-        typer.Exit(code=1)
-        return
-
-    try:
-        llm = LLMConnector(provider)
-    except Exception as ex:
-        typer.secho(
-            f"Error: Can`t connect to LLM Provider ({provider})'!\n{ex}",
-            fg=typer.colors.RED, err=True)
         typer.Exit(code=1)
         return
 

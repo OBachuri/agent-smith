@@ -1,5 +1,6 @@
 from openai import APIConnectionError, APIStatusError, APITimeoutError, OpenAI
 from openai.types.chat import ChatCompletionMessageParam
+from openai.types import Model
 
 from threading import Lock
 # from dataclasses import dataclass
@@ -77,6 +78,15 @@ class LLMConnector:
             index = self._index
             self._index = (self._index + 1) % len(self._clients)
             return index
+
+    def model_list(self) -> list[Model]:
+        for client in self._clients:
+            try:
+                models = client.models.list().data
+                return models
+            except Exception as ex:
+                print("Error: Can not get model list:", ex)
+        return []
 
     def chat_raw(
         self,
