@@ -14,7 +14,7 @@ from src.config_model import SWEBenchTaskInput, StepMetrics, SolutionOutput
 from src.sandbox_connector import SandboxClient
 from src.agent_utils import mpc_arguments_to_python, it_is_python_code
 from src.agent_utils import it_is_tool_call, mpc_result_to_txt
-from src.agent_utils import extract_function_code
+# from src.agent_utils import extract_function_code
 from src.agent_utils import normalize_json_arguments, check_str_is_json_dict
 
 from openai.types.chat import ChatCompletionMessageParam
@@ -390,10 +390,7 @@ def main(
     if print_debug:
         print("-"*10, " Sandbox tools:\n", sandbox_tools_list, "\n")
 
-    # return
-
-    # start Docker 
-    
+    # Start Docker
     if "start_task" not in sandbox_tools_list:
         typer.secho(
             "Error: Can`t work without start_task() tools'!\n",
@@ -401,7 +398,7 @@ def main(
         sandbox.close()
         typer.Exit(code=1)
         return
-        
+
     try:
         start_res = sandbox.run_tool(
             "print(start_task("
@@ -412,9 +409,19 @@ def main(
     except Exception as ex:
         typer.secho(
             "Error: MCP server can't start docker image "
-            f"{repr(the_task.docker_image)} for the task!\n",
+            f"{repr(the_task.docker_image)} for the task!\n"
             f"{ex}",
             fg=typer.colors.RED, err=True)
+        sandbox.close()
+        typer.Exit(code=1)
+        return
+
+    if not start_res.success:
+        typer.secho(
+            "Error: MCP server can't start docker image "
+            f"{repr(the_task.docker_image)} for the task!\n",
+            fg=typer.colors.RED, err=True)
+        typer.echo(start_res.sandbox_output)
         sandbox.close()
         typer.Exit(code=1)
         return
@@ -422,18 +429,6 @@ def main(
     if print_debug:
         print("Start staus:", start_res.sandbox_output)
 
-    if not start_res.success:
-        typer.secho(
-            "Error: MCP server can't start docker image "
-            f"{repr(the_task.docker_image)} for the task!\n",
-            fg=typer.colors.RED, err=True)
-        if not print_debug:
-            typer.echo(start_res.sandbox_output)
-        sandbox.close()
-        typer.Exit(code=1)
-        return
-
-    
     # Record start time
     start_time = time.perf_counter()
     typer.echo("🚀 Start...")
@@ -477,8 +472,7 @@ def main(
             "\n" + sandbox_manual + "\n"
             "Use run_tests() to test solutions and "
             "call final_answer(get_patch()) "
-            "once the problem has been solved\n"
-            ,
+            "once the problem has been solved\n",
         },
         {
             "role": "user",
