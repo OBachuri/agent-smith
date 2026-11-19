@@ -953,11 +953,11 @@ class Sandbox:
                         status="success"
                     )
                 # Process LLM responses containing code fences
-                elif terminal_mode and "```" not in data:
-                    result = await self.run_python(data)
+                elif "```" in data:
+                    result = await self.execute_llm_response(data)
                 # Execute raw Python code
                 else:
-                    result = await self.execute_llm_response(data)
+                    result = await self.run_python(data)
 
             except (KeyboardInterrupt, SystemExit):
                 raise
