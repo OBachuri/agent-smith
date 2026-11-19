@@ -1,20 +1,21 @@
-import typer
-import sys
-import asyncio
-import shlex
-import ast
-import builtins
 import os
-import signal
+import re
+import ast
+import sys
 import json
+import typer
+import shlex
+import signal
+import asyncio
 import keyword
-from jsonschema import Draft202012Validator
-from contextlib import AsyncExitStack
-from types import TracebackType
-from typing import Optional, Any, Type
+import builtins
 from pathlib import Path
 from fastmcp import Client
 from mcp.types import Tool
+from types import TracebackType
+from contextlib import AsyncExitStack
+from typing import Optional, Any, Type
+from jsonschema import Draft202012Validator
 from fastmcp.client.transports import StdioTransport
 from src.config_model import SandboxConfig, SandboxIntermediateResult
 
@@ -199,10 +200,26 @@ def extract_llm_code(
         )
 
     if not blocks:
-        return None, (
-            "No valid code block found. "
-            "Provide exactly one ```python block."
-        )
+        source = response.strip()
+
+        if not source:
+            return None, "No Python code found."
+
+        try:
+            ast.parse(source, mode="exec")
+        except SyntaxError:
+            python_pattern = (
+                r"(?m)^\s*(?:def|class|async|import|from|for|while|"
+                r"if|with|try|except|raise|return|assert|pass)\b"
+                r"|^\s*[A-Za-z_]\w*\s*(?:=|\()"
+            )
+
+            if not re.search(python_pattern, source):
+                return None, (
+                    "No valid code block or recognizable raw Python found."
+                )
+
+        return source, None
 
     if len(blocks) != 1:
         return None, (
@@ -952,12 +969,8 @@ class Sandbox:
                         sandbox_output=self.show_tools(),
                         status="success"
                     )
-                # Process LLM responses containing code fences
-                elif "```" in data:
-                    result = await self.execute_llm_response(data)
-                # Execute raw Python code
                 else:
-                    result = await self.run_python(data)
+                    result = await self.execute_llm_response(data)
 
             except (KeyboardInterrupt, SystemExit):
                 raise
