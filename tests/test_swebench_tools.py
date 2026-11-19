@@ -17,6 +17,7 @@ from fastmcp.exceptions import ToolError
 from mcp.types import TextContent
 from mcp_tools_swebench import SWEBenchMCP, create_server
 from src.config_model import SandboxConfig
+from src.swebench_docker import DockerSession
 from src.swebench_tools import RepositoryTools
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -135,8 +136,11 @@ class RepositoryCase(unittest.TestCase):
         self.assertEqual(self.tools.search_code(r"^def\s+solve", "*.py"),
                          f"{self.repo}/module.py:1 def solve(value):")
         self.assertEqual(self.tools.search_code("absent"), "No matches.")
-        with self.assertRaisesRegex(ToolError, "Invalid regular expression"):
-            self.tools.search_code("[")
+        (self.repo / "vector.py").write_text("total = sum([N.x, N.y])\n")
+        self.assertIn(
+            "sum([N.x",
+            self.tools.search_code("sum([N.x", "vector.py"),
+        )
 
     def test_expensive_regex_times_out(self) -> None:
         (self.repo / "long.txt").write_text("a" * 200000 + "!")
@@ -322,8 +326,29 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                 set(tools["start_task"].input_schema["required"]),
                 {"docker_image", "eval_script"},
             )
-            self.assertEqual(len(await client.list_resources()), 1)
-            self.assertEqual(len(await client.list_prompts()), 1)
+            resources = await client.list_resources()
+            read = await client.read_resource(str(resources[0].uri))
+            self.assertIn("idle", read[0].text)
+            prompts = await client.list_prompts()
+            rendered = await client.get_prompt(prompts[0].name)
+            self.assertIn("get_patch", rendered.messages[0].content.text)
+            (self.root / "vector.py").write_text("total = sum([N.x, N.y])\n")
+            found = await client.call_tool(
+                "search_code", {"pattern": "sum([N.x"},
+            )
+            self.assertFalse(found.is_error)
+            found_text = found.content[0]
+            assert isinstance(found_text, TextContent)
+            self.assertIn("sum([N.x", found_text.text)
+            blank = await client.call_tool(
+                "start_task",
+                {"docker_image": " ", "eval_script": "echo ok"},
+                raise_on_error=False,
+            )
+            self.assertTrue(blank.is_error)
+            blank_text = blank.content[0]
+            assert isinstance(blank_text, TextContent)
+            self.assertIn("docker_image", blank_text.text)
             response = await client.call_tool(
                 "run_command", {"command": "echo host-ok"},
             )
@@ -546,3 +571,35 @@ class ManualTests(unittest.TestCase):
             cwd=ROOT, capture_output=True, text=True, check=False,
         )
         self.assertNotEqual(rejected.returncode, 0)
+
+
+class ImagePullTests(unittest.IsolatedAsyncioTestCase):
+    async def test_missing_image_is_pulled(self) -> None:
+        session = DockerSession("img:latest", "echo ok", SandboxConfig())
+        self.addCleanup(session.directory.cleanup)
+        calls: list[str] = []
+
+        async def control(*arguments: str, timeout: float = 30) -> str:
+            calls.append(arguments[0])
+            if arguments[0] == "image":
+                raise ToolError("No such image: img:latest")
+            if arguments[0] == "exec":
+                return "ab" * 20
+            return "ok"
+
+        with patch.object(session, "_control", side_effect=control):
+            await session.start()
+        session.containers.clear()
+        self.assertEqual(calls[:2], ["image", "pull"])
+        self.assertEqual(session.base, "ab" * 20)
+
+    async def test_daemon_failure_does_not_pull(self) -> None:
+        session = DockerSession("img:latest", "echo ok", SandboxConfig())
+        self.addCleanup(session.directory.cleanup)
+
+        async def control(*arguments: str, timeout: float = 30) -> str:
+            raise ToolError("Cannot connect to the Docker daemon")
+
+        with patch.object(session, "_control", side_effect=control):
+            with self.assertRaisesRegex(ToolError, "Start Docker"):
+                await session.start()

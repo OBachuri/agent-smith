@@ -29,7 +29,8 @@ class SWEBenchMCP:
             (self.read_file, "Read numbered UTF-8 lines."),
             (self.edit_file, "Replace exactly one text match."),
             (self.list_files, "Recursively list matching files."),
-            (self.search_code, "Find regex matches and locations."),
+            (self.search_code,
+             "Find regex matches. Invalid patterns are searched as text."),
             (
                 self.search_function_or_class_definition_in_code,
                 "Find exact Python function and class definitions.",

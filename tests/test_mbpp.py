@@ -361,8 +361,19 @@ class TransportTests(RuntimeCase):
                              {"code", "test_list", "test_imports"})
             self.assertEqual(set(tools[0].input_schema["required"]),
                              {"code", "test_list"})
-            self.assertEqual(len(await client.list_resources()), 1)
-            self.assertEqual(len(await client.list_prompts()), 1)
+            resources = await client.list_resources()
+            read = await client.read_resource(str(resources[0].uri))
+            self.assertIn("deno/pyodide", read[0].text)
+            prompts = await client.list_prompts()
+            rendered = await client.get_prompt(prompts[0].name)
+            self.assertIn("run_tests", rendered.messages[0].content.text)
+            bad = await client.call_tool("run_tests", {
+                "code": " ", "test_list": ["assert True"],
+            })
+            self.assertFalse(bad.is_error)
+            bad_body = decode_result(bad.content[0].text)
+            self.assertFalse(bad_body["success"])
+            self.assertIn("Invalid MBPP request", bad_body["output"])
             for expected in [False, True]:
                 response = await client.call_tool("run_tests", {
                     "code": "def solve(): return 42",

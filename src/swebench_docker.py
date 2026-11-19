@@ -34,11 +34,13 @@ class DockerSession:
             self.root, config, Path(self.workdir),
         )
 
-    async def _control(self, *arguments: str, check: bool = True) -> str:
+    async def _control(
+        self, *arguments: str, check: bool = True, timeout: float = 30,
+    ) -> str:
         try:
             with CancelScope(shield=True):
                 result = await capture(
-                    ["docker", *arguments], 30, 4096,
+                    ["docker", *arguments], timeout, 4096,
                 )
         except FileNotFoundError:
             raise self.repository._error(
@@ -91,11 +93,13 @@ class DockerSession:
                 "image", "inspect", "--", self.docker_image,
             )
         except ToolError as error:
-            raise self.repository._error(
-                f"Cannot use Docker image {self.docker_image}. "
-                "Start Docker and pull the task image before launching. "
-                f"{error}",
-            ) from None
+            if "no such image" not in str(error).lower():
+                raise self.repository._error(
+                    f"Cannot use Docker image {self.docker_image}. "
+                    "Start Docker and pull the task image before launching. "
+                    f"{error}",
+                ) from None
+            await self._control("pull", self.docker_image, timeout=600)
         seed = await self._create(None)
         try:
             await self._control(
