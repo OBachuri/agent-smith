@@ -14,7 +14,7 @@ from anyio import move_on_after
 from fastmcp import Client
 from fastmcp.client.transports import StdioTransport
 from fastmcp.exceptions import ToolError
-from mcp.types import TextContent
+from mcp.types import TextContent, TextResourceContents
 from mcp_tools_swebench import SWEBenchMCP, create_server
 from src.config_model import SandboxConfig
 from src.swebench_docker import DockerSession
@@ -328,10 +328,14 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             )
             resources = await client.list_resources()
             read = await client.read_resource(str(resources[0].uri))
-            self.assertIn("idle", read[0].text)
+            resource = read[0]
+            assert isinstance(resource, TextResourceContents)
+            self.assertIn("idle", resource.text)
             prompts = await client.list_prompts()
             rendered = await client.get_prompt(prompts[0].name)
-            self.assertIn("get_patch", rendered.messages[0].content.text)
+            prompt = rendered.messages[0].content
+            assert isinstance(prompt, TextContent)
+            self.assertIn("get_patch", prompt.text)
             (self.root / "vector.py").write_text("total = sum([N.x, N.y])\n")
             found = await client.call_tool(
                 "search_code", {"pattern": "sum([N.x"},
