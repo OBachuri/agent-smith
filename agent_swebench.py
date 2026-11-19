@@ -462,6 +462,11 @@ def main(
     else:
         tools_list = []
 
+    hints = str(the_task.hints_text).strip()
+
+    if hints:
+        hints = "\nHints: " + hints + "\n"
+
     messages: list[ChatCompletionMessageParam] = [
         {
             "role": "system",
@@ -478,7 +483,8 @@ def main(
             "role": "user",
             "content": (
                 "The task (problem to solve): "
-                f"{the_task.problem_statement}\n")
+                f"{the_task.problem_statement}\n"
+                f"{hints}")
         },
     ]
 
