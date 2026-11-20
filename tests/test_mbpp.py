@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, patch
 from anyio import move_on_after
 from fastmcp import Client
 from fastmcp.client.transports import StdioTransport
-from mcp.types import TextContent
+from mcp.types import TextContent, TextResourceContents
 from pydantic import ValidationError
 
 import mcp_tools_mbpp as mbpp
@@ -361,8 +361,25 @@ class TransportTests(RuntimeCase):
                              {"code", "test_list", "test_imports"})
             self.assertEqual(set(tools[0].input_schema["required"]),
                              {"code", "test_list"})
-            self.assertEqual(len(await client.list_resources()), 1)
-            self.assertEqual(len(await client.list_prompts()), 1)
+            resources = await client.list_resources()
+            read = await client.read_resource(str(resources[0].uri))
+            resource = read[0]
+            assert isinstance(resource, TextResourceContents)
+            self.assertIn("deno/pyodide", resource.text)
+            prompts = await client.list_prompts()
+            rendered = await client.get_prompt(prompts[0].name)
+            prompt = rendered.messages[0].content
+            assert isinstance(prompt, TextContent)
+            self.assertIn("run_tests", prompt.text)
+            bad = await client.call_tool("run_tests", {
+                "code": " ", "test_list": ["assert True"],
+            })
+            self.assertFalse(bad.is_error)
+            bad_text = bad.content[0]
+            assert isinstance(bad_text, TextContent)
+            bad_body = decode_result(bad_text.text)
+            self.assertFalse(bad_body["success"])
+            self.assertIn("Invalid MBPP request", bad_body["output"])
             for expected in [False, True]:
                 response = await client.call_tool("run_tests", {
                     "code": "def solve(): return 42",

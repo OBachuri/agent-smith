@@ -238,8 +238,8 @@ class RepositoryTools:
             raise self._error("Search pattern must not be empty.")
         try:
             expression = regex.compile(pattern)
-        except regex.error as error:
-            raise self._error(f"Invalid regular expression: {error}") from None
+        except regex.error:
+            expression = regex.compile(regex.escape(pattern))
         deadline = time.monotonic() + self.config.max_execution_time_seconds
 
         try:
