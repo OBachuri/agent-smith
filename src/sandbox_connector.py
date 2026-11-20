@@ -90,7 +90,15 @@ class SandboxClient:
             max_sec: float = 2) -> SandboxIntermediateResult:
         json_str = self.request(tool_with_param, max_sec=max_sec)
         # print("json_str:", json_str)
-        return SandboxIntermediateResult.model_validate_json(json_str)
+        try:
+            res_ = SandboxIntermediateResult.model_validate_json(json_str)
+        except Exception as ex:
+            res_ = SandboxIntermediateResult(
+                success=False,
+                tool_name="sanbox",
+                sandbox_output=(f"Error: {ex}\n"
+                                f"Source: {json_str}"))
+        return res_
 
     def close(self) -> None:
         if self.process.stdin:

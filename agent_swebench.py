@@ -297,7 +297,7 @@ def main(
         typer.Exit(code=1)
         return
 
-    if print_model_list:
+    if print_model_list and llm.model_list():
         print("-"*10, " Provider model list:")
         i = 1
         for lm_ in llm.model_list():
@@ -352,6 +352,9 @@ def main(
         typer.echo("Eval script must be specified!")
         typer.Exit(code=1)
         return
+
+    typer.echo(f" Task id: {the_task.instance_id}")
+    typer.echo(f" Docker: {the_task.docker_image}")
 
     # Connect to sandbox
     try:

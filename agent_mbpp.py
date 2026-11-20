@@ -296,7 +296,7 @@ def main(
         typer.Exit(code=1)
         return
 
-    if print_model_list:
+    if print_model_list and llm.model_list():
         print("-"*10, " Provider model list:")
         i = 1
         for lm_ in llm.model_list():
@@ -406,7 +406,9 @@ def main(
             "role": "system",
             "content": "You are a Python coding agent.\n"
             "You must use MCP tools via Sandbox to check "
-            "candidate code and then send final result.\n"+sandbox_manual,
+            "candidate code. "
+            "Submit the verified solution code using final_answer()"
+            "\n"+sandbox_manual,
         },
         {
             "role": "user",
