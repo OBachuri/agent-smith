@@ -2,6 +2,7 @@ import json
 from typing import Any
 import ast
 import re
+import xml.etree.ElementTree as ET
 
 
 def check_str_is_json_dict(raw: Any) -> bool:
@@ -176,6 +177,196 @@ def it_is_tool_call(code_txt: str, func_lst: list[str]) -> list[str]:
                 if name in lst_:
                     res_.append(name)
     return res_
+
+
+def repair_xml(xml: str) -> str:
+    # Escape ampersands that are not already valid XML entities
+    return re.sub(
+        r"&(?!#\d+;|#x[0-9a-fA-F]+;|[a-zA-Z][a-zA-Z0-9._-]*;)",
+        "&amp;",
+        xml
+    )
+
+
+def extract_xml_block(
+    text: str,
+    root_tag: str = "tool_call"
+) -> tuple[str, int]:
+    """
+    Extract the first balanced XML block.
+    Returns (xml_block_text, end_of_block_pos).
+    root_tag: str = "ernie:tool_call"
+    """
+
+    start_pattern = re.compile(
+        r"<" + re.escape(root_tag) + r"(?=[\s>/])"
+    )
+
+    match = start_pattern.search(text)
+
+    if not match:
+        return "", 0
+
+    start = match.start()
+    pos = match.end()
+    depth = 1
+
+    while pos < len(text):
+        tag_start = text.find("<", pos)
+
+        if tag_start == -1:
+            break
+
+        # Comments
+        if text.startswith("<!--", tag_start):
+            end = text.find("-->", tag_start + 4)
+            if end == -1:
+                break
+            pos = end + 3
+            continue
+
+        # CDATA
+        if text.startswith("<![CDATA[", tag_start):
+            end = text.find("]]>", tag_start + 9)
+            if end == -1:
+                break
+            pos = end + 3
+            continue
+
+        # Processing instructions
+        if text.startswith("<?", tag_start):
+            end = text.find("?>", tag_start + 2)
+            if end == -1:
+                break
+            pos = end + 2
+            continue
+
+        # Find the end of the tag, ignoring quoted >
+        quote = None
+        tag_end = tag_start + 1
+
+        while tag_end < len(text):
+            char = text[tag_end]
+
+            if quote:
+                if char == quote:
+                    quote = None
+            elif char in ('"', "'"):
+                quote = char
+            elif char == ">":
+                break
+
+            tag_end += 1
+
+        if tag_end >= len(text):
+            break
+
+        tag = text[tag_start:tag_end + 1].strip()
+
+        closing = tag.startswith("</")
+        self_closing = tag.endswith("/>")
+
+        if closing:
+            depth -= 1
+        elif not tag.startswith("<!") and not self_closing:
+            depth += 1
+
+        if depth == 0:
+            end = tag_end + 1
+            return text[start:end], end
+
+        pos = tag_end + 1
+
+    return "", 0
+
+
+def parse_ernie_tool_calls(raw_response: str) -> tuple[list[dict], str]:
+    """
+    Parse XML tool calls - Anthropic-style <invoke
+    name="..."><parameter>...</parameter></invoke>
+
+    return:
+        res: list[dict] - list of dict, dict =
+                {"name":str, arguments:{name:str, value:any}}
+        Error: str - Errors text
+    """
+
+    t_str = raw_response.replace(
+        "<ernie:", "<").replace(
+            "</ernie:", "</")
+    calls = []
+    errors_ = ""
+    start = t_str.find("<tool_call")
+    while start >= 0:
+        end = t_str.rfind("<tool_call", start)
+        xml = ""
+        if start == end:  # only one <tool_call
+            end = t_str.rfind("</tool_call", start)
+            if end >= 0:
+                end = t_str.find(">", end) + 1
+        else:
+            xml, end = extract_xml_block(t_str[start:])
+            if end > 0:
+                end += start + 1
+        if end > start:  # something found
+            if not xml:
+                xml = t_str[start:end]
+            start = t_str.find("<tool_call", start + 10)
+            #  print("---", xml, "---")
+            root = None
+            try:
+                root = ET.fromstring(xml)
+            except Exception as ex:
+                error_ = (
+                    "Error parsing tool call in Anthropic-style:"
+                    f"\n{ex}\n"
+                    "Source text that can't be parse as xml:\n"
+                    f"```{xml}```\n")
+                if xml.find("&") > 0:
+                    error_ += "May be '&' must be escaped like that '&amp;'\n"
+                errors_ += error_
+                print(error_)
+
+            if root is None:
+                xml = repair_xml(xml)
+                try:
+                    root = ET.fromstring(xml)
+                except Exception:
+                    continue
+
+            if root.tag != "tool_call":
+                continue
+
+            for invoke in root.findall("invoke"):
+                name = invoke.get("name", "")
+                if not name:
+                    continue
+
+                arguments = {}
+
+                for param in invoke.findall("parameter"):
+                    key = param.get("name", "")
+                    if not key:
+                        continue
+
+                    value = param.text or ""
+
+                    # Attempt JSON decoding for non-string values
+                    try:
+                        value = json.loads(value)
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+
+                    arguments[key] = value
+
+                calls.append({
+                    "name": name,
+                    "arguments": arguments
+                })
+        else:
+            start = t_str.find("<tool_call", start + 10)
+
+    return calls, errors_
 
 
 def mpc_result_to_txt(r_str: str | list[str]) -> str | list[str]:

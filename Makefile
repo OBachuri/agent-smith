@@ -42,11 +42,13 @@ run:
 
 	uv run python -m agent_mbpp --task-file cache/mbpp_task.json \
 		--output cache/mbpp_solution.json \
-		--model-name "nvidia/nemotron-3.5-super-vl:free" \
+		--model-name "baidu/ernie-5.5-flash-preview:free" \
 		--provider-url "https://openrouter.ai/api/v1" \
-		--print-debug 
+		--print-debug \
+		--reasoning
 
 #		--print-model-list
+#		--reasoning
 #
 #		--provider-api-keys-file "cache/mbpp_task.json" 
 # 		--provider-api-key "1 zsdfsd" \
@@ -62,9 +64,10 @@ run-s:
 
 	uv run python -m agent_swebench --task-file cache/swebench_task.json \
 		--output cache/swebenc_solution.json \
-		--model-name "cohere/north-mini-code:free" \
+		--model-name "baidu/ernie-5.5-flash-preview:free" \
 		--provider-url "https://openrouter.ai/api/v1" \
-		--print-debug 
+		--print-debug \
+		--reasoning
 
 
 debug:
