@@ -16,6 +16,7 @@ from src.agent_utils import mpc_arguments_to_python, it_is_python_code
 from src.agent_utils import it_is_tool_call, mpc_result_to_txt
 # from src.agent_utils import extract_function_code
 from src.agent_utils import normalize_json_arguments, check_str_is_json_dict
+from src.agent_utils import parse_ernie_tool_calls
 
 from openai.types.chat import ChatCompletionMessageParam
 
@@ -510,6 +511,8 @@ def main(
     total_input_tokens = 0
     total_output_tokens = 0
     python_text: list[str] = []
+    max_tool_retries = 3
+    tool_call_error = 0
 
     while (
             llm_step_number < max_iterations
@@ -665,7 +668,9 @@ def main(
                                     "content": ("Error: Tool (name="
                                                 f"{tool_name}) not found!")
                                  }))
-                        llm_finish = False
+                        tool_call_error += 1
+                        if tool_call_error < max_tool_retries:
+                            llm_finish = False
                         continue
                     arg_str = ""
                     if tool_name == 'execute_sandbox':
@@ -693,7 +698,9 @@ def main(
                                             f'from list: {sandbox_tools_list}"'
                                             )
                                     }))
-                            llm_finish = False
+                            tool_call_error += 1
+                            if tool_call_error < max_tool_retries:
+                                llm_finish = False
                             continue
                     elif (tool_call.function.arguments
                           and tool_call.function.arguments.strip()):
@@ -714,7 +721,9 @@ def main(
                                             f'{tool_call.function.arguments}"'
                                             )
                                     }))
-                            llm_finish = False
+                            tool_call_error += 1
+                            if tool_call_error < max_tool_retries:
+                                llm_finish = False
                             continue
                     if tool_name != 'execute_sandbox':
                         sb_call = f"print({tool_name}({arg_str}))"
@@ -722,6 +731,7 @@ def main(
                         print("Tool call:")
                         print(" - call_id:", call_id)
                         print(" - call:", sb_call)
+                    tool_call_error = 0
                     sandbox_input += sb_call + "\n"
                     # print("=====", sandbox_input)
                     result_ = sandbox.run_tool(sb_call)
@@ -738,8 +748,6 @@ def main(
                     llm_finish = False
                     if print_debug:
                         print(" - result:", tool_result)
-                    # if tool_name == 'run_tests' and result_.success:
-                    #     llm_tested_code = True
                     if result_.success and result_.final_answer:
                         solution = str(result_.final_answer)
                         llm_finish = True
@@ -752,9 +760,141 @@ def main(
 
             # (a) Python code blocks (primary) — “‘python ... “‘ <end_code>
             python_text = []
-
             if response.choices[0].message.content:
                 str_ = str(response.choices[0].message.content).strip()
+
+                # try find XML tool calls in Anthropic-style
+                if str_.find("tool_call"):
+                    tools_calls, error_txt = parse_ernie_tool_calls(str_)
+                    if not tools_calls and error_txt:
+                        messages.append(
+                            cast(
+                                ChatCompletionMessageParam,
+                                {
+                                    "role": "user",
+                                    "content": (
+                                        "Tool call parsing failed.\n"
+                                        "Your previous tool call was "
+                                        "malformed. "
+                                        "No command had been executed "
+                                        "on this step."
+                                        "Regenerate the complete tool call "
+                                        "using valid XML.\n"
+                                        f"Error: {error_txt}"), }))
+                        tool_call_error += 1
+                        if tool_call_error < max_tool_retries:
+                            llm_finish = False
+                        continue
+                    if tools_calls:
+                        for call_xml in tools_calls:
+                            if print_debug:
+                                print("-"*10)
+                                print("XML Tool call:")
+                                print(call_xml)
+
+                            tool_name = call_xml.get("name", "")
+                            arg_json = call_xml.get("arguments", "")
+                            if ((tool_name not in sandbox_tools_list
+                                 and tool_name != 'execute_sandbox')):
+                                print(f"Tool (name={tool_name}) not found!")
+                                messages.append(
+                                    cast(ChatCompletionMessageParam,
+                                         {
+                                            "role": "user",
+                                            "content": (
+                                                "Error: Tool (name="
+                                                f"{tool_name}) not found!")
+                                         }))
+                                tool_call_error += 1
+                                if tool_call_error < max_tool_retries:
+                                    llm_finish = False
+                                continue
+
+                            if tool_name != 'execute_sandbox':
+                                arg_str = ""
+                                if arg_json:
+                                    arg_str = mpc_arguments_to_python(arg_json)
+                                    if not arg_str:
+                                        messages.append(
+                                            cast(
+                                                ChatCompletionMessageParam,
+                                                {
+                                                    "role": "user",
+                                                    "content": (
+                                                        "Error: parsing tool "
+                                                        "arguments!\n"
+                                                        "tool_name="
+                                                        f'"{tool_name}",\n'
+                                                        'arguments="'
+                                                        f'{str(arg_json)}"'
+                                                        )
+                                                }))
+                                        tool_call_error += 1
+                                        if tool_call_error < max_tool_retries:
+                                            llm_finish = False
+                                        continue
+                                sb_call = f"print({tool_name}({arg_str}))"
+                            else:
+                                try:
+                                    arg_dict = normalize_json_arguments(
+                                        arg_json)
+                                except Exception:
+                                    arg_dict = {}
+                                arg_str = arg_dict.get("code", "")
+                                if arg_str and it_is_python_code(arg_str):
+                                    sb_call = arg_str
+                                else:
+                                    messages.append(
+                                        cast(
+                                            ChatCompletionMessageParam,
+                                            {
+                                                "role": "user",
+                                                "content": (
+                                                    "Error: parsing tool "
+                                                    "arguments.\n"
+                                                    "tool_name="
+                                                    f'"{tool_name}",\n'
+                                                    'Argument "code"'
+                                                    " must be "
+                                                    'Python style call of '
+                                                    'a function from list: '
+                                                    f'{sandbox_tools_list}".'
+                                                    )
+                                            }))
+                                    tool_call_error += 1
+                                    if tool_call_error < max_tool_retries:
+                                        llm_finish = False
+                                    continue
+
+                            tool_call_error = 0
+                            if print_debug:
+                                print("Tool call:")
+                                print(" - call:", sb_call)
+                            sandbox_input += sb_call + "\n"
+                            # print("=====", sandbox_input)
+                            result_ = sandbox.run_tool(sb_call)
+                            # print("-===:sandbox return:", result_)
+                            tool_result = mpc_result_to_txt(
+                                result_.sandbox_output)
+                            sandbox_output += str(tool_result) + "\n"
+                            messages.append(
+                                cast(ChatCompletionMessageParam,
+                                     {
+                                        "role": "user",
+                                        "content": (
+                                            "Tool call result: "
+                                            f"{tool_result}")
+                                     }))
+                            tool_call_error = 0
+                            llm_finish = False
+                            if print_debug:
+                                print(" - result:", tool_result)
+                            if result_.success and result_.final_answer:
+                                solution = str(result_.final_answer)
+                                llm_finish = True
+                        continue
+
+                # try to find Python code
                 start = 0
                 while (start >= 0):
                     start = str_.find("```python", start)
