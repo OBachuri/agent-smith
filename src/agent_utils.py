@@ -280,6 +280,52 @@ def extract_xml_block(
     return "", 0
 
 
+def parse_function_tool_calls(response: str) -> list[dict]:
+    """
+    Parse liquid/lfm-3-1.7b tool call. Example:
+
+    <tool_call>
+        <function=read_file>
+            <parameter=path>/usr/local/lib/python3.6/site-packages/sympy/physics/vector/vector.py</parameter>
+        </function>
+    </tool_call>
+    """
+
+    calls = []
+
+    function_pattern = re.compile(
+        r"<function=([a-zA-Z_][\w.-]*)\s*>(.*?)</function\s*>",
+        re.DOTALL
+    )
+
+    parameter_pattern = re.compile(
+        r"<parameter=([a-zA-Z_][\w.-]*)\s*>(.*?)</parameter\s*>",
+        re.DOTALL
+    )
+
+    for function_match in function_pattern.finditer(response):
+        name = function_match.group(1)
+        body = function_match.group(2)
+
+        arguments = {}
+
+        for param_match in parameter_pattern.finditer(body):
+            param_name = param_match.group(1)
+            param_value = param_match.group(2).strip()
+
+            if param_name in arguments:
+                raise ValueError(f"Duplicate parameter: {param_name}")
+
+            arguments[param_name] = param_value
+
+        calls.append({
+            "name": name,
+            "arguments": arguments
+        })
+
+    return calls
+
+
 def parse_ernie_tool_calls(raw_response: str) -> tuple[list[dict], str]:
     """
     Parse XML tool calls - Anthropic-style <invoke
@@ -328,11 +374,20 @@ def parse_ernie_tool_calls(raw_response: str) -> tuple[list[dict], str]:
                 print(error_)
 
             if root is None:
-                xml = repair_xml(xml)
+                xml_e = repair_xml(xml)
                 try:
-                    root = ET.fromstring(xml)
+                    root = ET.fromstring(xml_e)
                 except Exception:
-                    continue
+                    pass
+
+            if root is None:
+                try:
+                    c_ = parse_function_tool_calls(xml)
+                    if c_:
+                        calls.extend(c_)
+                except Exception:
+                    pass
+                continue
 
             if root.tag != "tool_call":
                 continue
