@@ -342,8 +342,38 @@ def main() -> None:
                 safe = restricted_builtins(
                     config["authorized_imports"], config["allowed_directories"]
                 )
-                # Fail closed: never emit 'ready' unless ALL restrictions work.
-                enforce_security(config)
+
+                if sys.platform == "darwin":
+                    # Preload authorized imports before applying Seatbelt.
+                    _security.preload_modules(config["authorized_imports"])
+
+                    macos_file = Path(__file__).resolve().with_name(
+                        "sandbox_macos.py"
+                    )
+
+                    macos_spec = importlib.util.spec_from_file_location(
+                        "_sandbox_macos_impl", macos_file
+                    )
+
+                    if macos_spec is None or macos_spec.loader is None:
+                        raise RuntimeError(
+                            "Cannot load macOS security backend"
+                        )
+
+                    macos_module = importlib.util.module_from_spec(macos_spec)
+                    macos_spec.loader.exec_module(macos_module)
+
+                    macos_module.enforce_macos_security(
+                        config,
+                        trusted_files=[
+                            Path(__file__).resolve(),
+                            _security_file,
+                            macos_file
+                        ]
+                    )
+                else:
+                    enforce_security(config)
+
                 namespace = {
                     "__name__": "__sandbox__",
                     "__builtins__": safe,
@@ -374,11 +404,19 @@ def main() -> None:
 
         except (KeyboardInterrupt, SystemExit):
             raise
-        except Exception:
-            send({"type": "result", "status": "error",
-                  "error": traceback.format_exc()})
+        except Exception as exc:
             if not initialized:
-                return  # Startup failed; sandbox remains locked.
+                send({
+                    "type": "init_error",
+                    "error": f"{type(exc).__name__}: {exc}"
+                })
+                return
+            send({
+                "type": "result",
+                "status": "error",
+                # "error": traceback.format_exc()
+                "error": f"{type(exc).__name__}: {exc}"
+            })
 
 
 if __name__ == "__main__":
