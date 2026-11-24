@@ -374,11 +374,19 @@ def main() -> None:
 
         except (KeyboardInterrupt, SystemExit):
             raise
-        except Exception:
-            send({"type": "result", "status": "error",
-                  "error": traceback.format_exc()})
+        except Exception as exc:
             if not initialized:
-                return  # Startup failed; sandbox remains locked.
+                send({
+                    "type": "init_error",
+                    "error": f"{type(exc).__name__}: {exc}"
+                })
+                return
+            send({
+                "type": "result",
+                "status": "error",
+                # "error": traceback.format_exc()
+                "error": f"{type(exc).__name__}: {exc}"
+            })
 
 
 if __name__ == "__main__":

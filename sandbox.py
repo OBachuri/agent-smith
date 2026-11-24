@@ -361,7 +361,7 @@ class Sandbox:
             cwd=self._execution_directory(),
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
             start_new_session=(os.name == "posix"),
             env={
                 "PATH": "/usr/bin:/bin",
@@ -394,16 +394,31 @@ class Sandbox:
             )
 
             if not response:
-                raise RuntimeError("Worker exited during initialization")
+                raise RuntimeError(
+                    "Worker exited before sending an initialization response"
+                )
             message = json.loads(response)
             if message.get("type") != "ready":
                 raise RuntimeError(
-                    f"Worker initialization failed: \
-                    {message.get('error', message)}"
+                    "Worker initialization failed: "
+                    f"{message.get('error', message)}"
                 )
 
-        except BaseException:
+        except BaseException as exc:
+            process = self._worker
             await self._stop_worker()
+
+            stderr_output = ""
+
+            if process is not None and process.stderr is not None:
+                stderr_output = (
+                    await process.stderr.read()
+                ).decode("utf-8", errors="replace").strip()
+            if stderr_output and isinstance(exc, Exception):
+                raise RuntimeError(
+                    f"{exc}\nWorker stderr:\n{stderr_output}"
+                ) from exc
+
             raise
 
     async def _stop_worker(self) -> None:

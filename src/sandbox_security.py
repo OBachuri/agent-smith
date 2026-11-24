@@ -44,12 +44,14 @@ class _BpfProgram(ctypes.Structure):
 
 
 _libc = ctypes.CDLL(None, use_errno=True)
-_libc.syscall.restype = ctypes.c_long
-_libc.prctl.restype = ctypes.c_int
-_libc.prctl.argtypes = [
-    ctypes.c_int, ctypes.c_ulong, ctypes.c_ulong,
-    ctypes.c_ulong, ctypes.c_ulong
-]
+
+if platform.system() == "Linux" and platform.machine() == "x86_64":
+    _libc.syscall.restype = ctypes.c_long
+    _libc.prctl.restype = ctypes.c_int
+    _libc.prctl.argtypes = [
+        ctypes.c_int, ctypes.c_ulong, ctypes.c_ulong,
+        ctypes.c_ulong, ctypes.c_ulong,
+    ]
 
 
 def _syscall(number: int, *arguments: object) -> int:
@@ -114,7 +116,13 @@ def _landlock(directories: list[str]) -> None:
             # A configured path must already be a directory inside the worker.
             if not os.path.isdir(directory):
                 continue
-            fd = os.open(directory, os.O_PATH | os.O_CLOEXEC)
+            # fd = os.open(directory, os.O_PATH | os.O_CLOEXEC)
+            o_path = getattr(os, "O_PATH", None)
+
+            if not isinstance(o_path, int):
+                raise RuntimeError("O_PATH is unavailable on this platform")
+
+            fd = os.open(directory, o_path | os.O_CLOEXEC)
             try:
                 rule = _PathRule(granted, fd, 0)
                 _syscall(445, ctypes.c_int(ruleset_fd), ctypes.c_int(1),
@@ -254,16 +262,31 @@ def restricted_builtins(rules: list[str], directories: list[str]) -> dict:
 
 
 def enforce_security(config: dict) -> None:
-    if platform.system() != "Linux" or platform.machine() != "x86_64":
+    # if platform.system() != "Linux" or platform.machine() != "x86_64":
+    #     raise RuntimeError(
+    #         "This security implementation requires Linux x86-64"
+    #     )
+    system = platform.system()
+    machine = platform.machine()
+
+    if system == "Linux" and machine == "x86_64":
+        # Existing Linux security implementation
+        directories = config["allowed_directories"]
+        preload_modules(config["authorized_imports"])
+        os.umask(0o077)
+        # Hard limits cannot be raised by executed code.
+        resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+        limit = config["max_memory_mb"] * 1024 * 1024
+        resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
+        _landlock(directories)  # Throw if Landlock is unavailable: fail closed
+        _seccomp()             # Throws if seccomp is unavailable: fail closed
+    elif system == "Darwin" and machine in ("arm64", "x86_64"):
         raise RuntimeError(
-            "This security implementation requires Linux x86-64"
+            "macOS detected. Native Seatbelt isolation "
+            "is not implemented yet. Run the Sandbox "
+            "inside a compatible Linux VM/container."
         )
-    directories = config["allowed_directories"]
-    preload_modules(config["authorized_imports"])
-    os.umask(0o077)
-    # Hard limits cannot be raised by executed code.
-    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
-    limit = config["max_memory_mb"] * 1024 * 1024
-    resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
-    _landlock(directories)  # Throws if Landlock is unavailable: fail closed.
-    _seccomp()             # Throws if seccomp is unavailable: fail closed.
+    else:
+        raise RuntimeError(
+            f"Unsupported platform: {system} ({machine})"
+        )
