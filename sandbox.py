@@ -444,6 +444,43 @@ class Sandbox:
         if process.stdin is not None:
             process.stdin.close()
 
+    async def _macos_memory_mb(self, pid: int) -> float | None:
+        """Read a process's RSS on macOS, in MiB."""
+
+        monitor = await asyncio.create_subprocess_exec(
+            "/bin/ps",
+            "-o", "rss=",
+            "-p", str(pid),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                monitor.communicate(), timeout=2
+            )
+        except BaseException:
+            if monitor.returncode is None:
+                monitor.kill()
+                await monitor.wait()
+            raise
+
+        if monitor.returncode != 0:
+            if self._worker is None or self._worker.returncode is not None:
+                return None
+
+            raise RuntimeError(
+                "Cannot read macOS worker memory: "
+                + stderr.decode(errors="replace")
+            )
+
+        output = stdout.decode().strip()
+        if not output:
+            return None
+
+        # macOS ps reports RSS in KiB.
+        return int(output.split()[0]) / 1024
+
     def show_manual(self) -> None:
         print(
             manual(
@@ -701,6 +738,7 @@ class Sandbox:
 
         loop = asyncio.get_running_loop()
         deadline = loop.time() + self.config.max_execution_time_seconds
+        last_memory_check = 0.0
 
         try:
             request = {"type": "run", "code": source}
@@ -717,10 +755,47 @@ class Sandbox:
                 if remaining <= 0:
                     raise asyncio.TimeoutError()
 
-                raw = await asyncio.wait_for(
-                    process.stdout.readline(),
-                    timeout=remaining
-                )
+                if sys.platform == "darwin":
+                    now = loop.time()
+
+                    if now - last_memory_check >= 0.2:
+                        memory_mb = await self._macos_memory_mb(process.pid)
+                        last_memory_check = loop.time()
+
+                        if (
+                            memory_mb is not None and
+                            memory_mb > self.config.max_memory_mb
+                        ):
+                            await self._stop_worker()
+
+                            return SandboxIntermediateResult(
+                                success=False,
+                                tool_name="python",
+                                status="memory_limit",
+                                truncated=(truncated or tool_truncated),
+                                sandbox_output=(
+                                    "Worker exceeded the configured "
+                                    f"memory threshold of "
+                                    f"{self.config.max_memory_mb} MiB "
+                                    f"(observed RSS: {memory_mb:.1f} MiB). "
+                                    "Worker terminated.\n"
+                                    f"Partial output:\n{''.join(pieces)}"
+                                )
+                            )
+
+                try:
+                    raw = await asyncio.wait_for(
+                        process.stdout.readline(),
+                        timeout=(
+                            min(remaining, 0.2)
+                            if sys.platform == "darwin"
+                            else remaining
+                        )
+                    )
+                except asyncio.TimeoutError:
+                    if sys.platform == "darwin" and loop.time() < deadline:
+                        continue
+                    raise
 
                 if not raw:
                     await self._stop_worker()
@@ -779,6 +854,27 @@ class Sandbox:
 
                 if kind == "result":
                     status = message["status"]
+
+                    if sys.platform == "darwin" and status != "memory_limit":
+                        memory_mb = await self._macos_memory_mb(process.pid)
+
+                        if (
+                            memory_mb is not None
+                            and memory_mb > self.config.max_memory_mb
+                        ):
+                            await self._stop_worker()
+
+                            return SandboxIntermediateResult(
+                                success=False,
+                                tool_name="python",
+                                status="memory_limit",
+                                truncated=(truncated or tool_truncated),
+                                sandbox_output=(
+                                    f"Memory limit exceeded: {memory_mb:.1f} "
+                                    f"MiB (maximum {self.config.max_memory_mb}"
+                                    " MiB). Worker terminated."
+                                )
+                            )
 
                     if status == "memory_limit":
                         await self._stop_worker()

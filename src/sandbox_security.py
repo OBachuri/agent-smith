@@ -236,7 +236,19 @@ def restricted_builtins(rules: list[str], directories: list[str]) -> dict:
             raise PermissionError(
                 "Opening arbitrary file descriptors is prohibited"
             )
-        candidate = Path(file).resolve()
+        candidate = Path(file)
+
+        if (
+            platform.system() == "Darwin" and
+            candidate.is_absolute() and (
+                candidate == Path("/tmp") or
+                Path("/tmp") in candidate.parents
+            )
+        ):
+            candidate = Path("/private/tmp") / candidate.relative_to("/tmp")
+
+        candidate = candidate.resolve()
+
         if not any(
             candidate == root or root in candidate.parents for root in roots
         ):
