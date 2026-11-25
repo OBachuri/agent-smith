@@ -957,7 +957,7 @@ class Sandbox:
             await self._stop_worker()
             raise
 
-        except (BrokenPipeError, ConnectionResetError,
+        except (BrokenPipeError, ConnectionResetError, ConnectionError,
                 json.JSONDecodeError, RuntimeError) as exc:
             await self._stop_worker()
 
@@ -965,7 +965,11 @@ class Sandbox:
                 success=False,
                 tool_name="python",
                 status="error",
-                sandbox_output=f"Worker communication failed: {exc}",
+                sandbox_output=(
+                    "".join(pieces) +
+                    f"\n[Sandbox: Worker communication failed: {exc}]"
+                ),
+                truncated=(truncated or tool_truncated)
             )
 
     async def execute_llm_response(
