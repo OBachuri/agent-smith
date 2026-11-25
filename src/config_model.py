@@ -189,7 +189,7 @@ class SolutionOutput(BaseModel):
     error: Optional[str] = Field(
         default=None,
         description="Error message if the agent failed (None if successful)")
-    timeagent_mbppstamp: str = Field(
+    timestamp: str = Field(
         default_factory=lambda: datetime.now().isoformat(),
         description="ISO 8601 timestamp of when the solution was produced")
 

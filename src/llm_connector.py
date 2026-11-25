@@ -99,6 +99,7 @@ class LLMConnector:
         last_error: Exception | None = None
         self.retries = 0
         kwargs.setdefault('temperature', self.temperature)
+        kwargs.setdefault('timeout', 190)
 
         for offset in range(len(self._clients)):
             client = self._clients[
@@ -120,7 +121,8 @@ class LLMConnector:
 
         raise LLMError(
             f"All {len(self._clients)} API keys failed "
-            f"for provider {self.config.name}"
+            f"for provider {self.config.name} "
+            f"{str(last_error)} "
         ) from last_error
 
     def chat(
@@ -134,6 +136,7 @@ class LLMConnector:
         last_error: Exception | None = None
         self.retries = 0
         kwargs.setdefault('temperature', self.temperature)
+        kwargs.setdefault('timeout', 190)
 
         for offset in range(len(self._clients)):
             client = self._clients[
@@ -156,7 +159,8 @@ class LLMConnector:
 
         raise LLMError(
             f"All {len(self._clients)} API keys failed "
-            f"for provider {self.config.name}"
+            f"for provider {self.config.name} "
+            f"{str(last_error)} "
         ) from last_error
 
 

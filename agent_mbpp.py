@@ -494,9 +494,11 @@ def main(
                 "Error: Can`t get llm response'!\n",
                 fg=typer.colors.RED, err=True)
             typer.secho(ex, err=True)
-            sandbox.close()
-            typer.Exit(code=1)
-            return
+            # sandbox.close()
+            # typer.Exit(code=1)
+            # return
+            error_txt += f"Error: Can`t get llm response'!\n {str(ex)}"
+            continue
 
         if response.choices[0].message.tool_calls:
             # Check if model sent correct tool calls
@@ -982,6 +984,18 @@ def main(
                                 solution = txt_code_solution
                                 llm_finish = True
                                 break
+
+        if not solution and llm_finish and tool_call_error == 0:
+            tool_call_error += 1
+            messages.append(
+                cast(ChatCompletionMessageParam,
+                     {
+                        "role": "user",
+                        "content": ("The solution did not exposed. "
+                                    "Call tool final_answer() with "
+                                    "solution code text as parameter!\n")
+                     }))
+            llm_finish = False
 
         if solution and llm_finish:
             test_ = final_chek(solution)
