@@ -106,7 +106,7 @@ def main(
         typer.Option(
             "--max-iterations",
             min=1,
-            max=50,
+            max=900,
             help="Maximum steps to solve the task.",
         )
     ] = 30,
@@ -118,7 +118,7 @@ def main(
             max=2000000,
             help="Maximum input tokens.",
         )
-    ] = 200000,
+    ] = 300000,
     max_out_tokens: Annotated[
         int,
         typer.Option(
@@ -480,7 +480,19 @@ def main(
             " inside Docker container.\n"
             "Your objective is to fix the reported issue "
             "in the target repository and return a valid git patch.\n"
-            "To work with repository you must use MCP tools via Sandbox."
+            "To work with repository you must use MCP tools via Sandbox.\n"
+            "The Sandbox is ONLY an MCP tool interface! "
+            "And only MCP tools have access to project repository.\n"
+            "Its purpose is to call the available MCP functions "
+            "to interact with the target repository.\n"
+            "The only permitted operations in sandbox code "
+            "are calls to the available MCP tools.\n"
+            "In Sandbox code you MUST NOT:\n"
+            "- Import project libraries or third-party packages.\n"
+            "- Derectly execute the user's reproduction example.\n"
+            "- Run arbitrary Python scripts.\n"
+            "- Try to read or write repository files "
+            "using Python filesystem functions.\n"
             "\n" + sandbox_manual + "\n"
             "\n"
             "# Coding rules:\n"
@@ -498,6 +510,8 @@ def main(
             "- Search for relevant functions, classes, error messages,"
             " or expressions using search_code"
             " or search_function_or_class_definition_in_code.\n"
+            "There are a lot of files. "
+            "Try to narrow down your search as much as possible.\n"
             "- Use the exact file paths returned by MCP tools."
             " Never guess filenames or paths.\n"
             "- Read only the relevant source sections using read_file.\n"
@@ -517,6 +531,8 @@ def main(
             " unless necessary.\n"
             "- Use returned MCP observations to decide the next action.\n"
             "- Do not attempt several speculative fixes in one step.\n"
+            "- Do not use external sources, GitHub issues, "
+            "pull requests, or memorized patches.\n"
             "\n",
         },
         {
@@ -607,9 +623,11 @@ def main(
                 "Error: Can`t get llm response'!\n",
                 fg=typer.colors.RED, err=True)
             typer.secho(ex, err=True)
-            sandbox.close()
-            typer.Exit(code=1)
-            return
+            # sandbox.close()
+            # typer.Exit(code=1)
+            # return
+            error_txt += f"Error: Can`t get llm response'!\n{str(ex)}"
+            continue
 
         if response.choices[0].message.tool_calls:
             # Check if model sent correct tool calls
@@ -1090,6 +1108,20 @@ def main(
                         #         llm_finish = True
                         #         break
 
+        if not solution and llm_finish and tool_call_error == 0:
+            tool_call_error += 1
+            messages.append(
+                cast(ChatCompletionMessageParam,
+                     {
+                        "role": "user",
+                        "content": ("No solution was provided, "
+                                    "and no tool was called on "
+                                    "the last step.\n"
+                                    "This is the end? "
+                                    "You can not solve this task?\n")
+                     }))
+            llm_finish = False
+
         if solution and llm_finish:
             test_ = final_chek(solution)
             if test_:   # something wrong
@@ -1169,7 +1201,7 @@ def main(
 
     task_solution = SolutionOutput(
         task_id=str(the_task.instance_id),
-        benchmark='mbpp',
+        benchmark='swebench',
         success=final_success,
         solution=solution,
         iterations=llm_step_number,

@@ -494,9 +494,11 @@ def main(
                 "Error: Can`t get llm response'!\n",
                 fg=typer.colors.RED, err=True)
             typer.secho(ex, err=True)
-            sandbox.close()
-            typer.Exit(code=1)
-            return
+            # sandbox.close()
+            # typer.Exit(code=1)
+            # return
+            error_txt += f"Error: Can`t get llm response'!\n {str(ex)}"
+            continue
 
         if response.choices[0].message.tool_calls:
             # Check if model sent correct tool calls
