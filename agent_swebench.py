@@ -572,8 +572,12 @@ def main(
                     fg=typer.colors.BLUE)
 
         if print_debug and (llm_step_number > 1):
-            for m_ in messages:
-                print(m_)
+            if len(messages) < 3:
+                for m_ in messages:
+                    print(m_)
+            else:
+                print(messages[-2])
+                print(messages[-1])
 
         llm_start_time = time.perf_counter()
         extra_body: dict[str, Any] = {}

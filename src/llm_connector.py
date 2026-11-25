@@ -99,6 +99,7 @@ class LLMConnector:
         last_error: Exception | None = None
         self.retries = 0
         kwargs.setdefault('temperature', self.temperature)
+        kwargs.setdefault('timeout', 70)
 
         for offset in range(len(self._clients)):
             client = self._clients[

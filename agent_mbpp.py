@@ -983,6 +983,18 @@ def main(
                                 llm_finish = True
                                 break
 
+        if not solution and llm_finish and tool_call_error == 0:
+            tool_call_error += 1
+            messages.append(
+                cast(ChatCompletionMessageParam,
+                     {
+                        "role": "user",
+                        "content": ("The solution did not exposed. "
+                                    "Call tool final_answer() with "
+                                    "solution code text as parameter!\n")
+                     }))
+            llm_finish = False
+
         if solution and llm_finish:
             test_ = final_chek(solution)
             if test_:   # something wrong
