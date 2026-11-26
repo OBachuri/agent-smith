@@ -394,7 +394,7 @@ def main(
     if print_debug:
         print("-"*10, " Sandbox tools:\n", sandbox_tools_list, "\n")
 
-    # Start Docker
+    # Start Docker !!!!!!!
     if "start_task" not in sandbox_tools_list:
         typer.secho(
             "Error: Can`t work without start_task() tools'!\n",
@@ -483,7 +483,7 @@ def main(
             "To work with repository you must use MCP tools via Sandbox.\n"
             "The Sandbox is ONLY an MCP tool interface! "
             "And only MCP tools have access to project repository.\n"
-            "Its purpose is to call the available MCP functions "
+            "Sandbox purpose is to call the available MCP functions "
             "to interact with the target repository.\n"
             "The only permitted operations in sandbox code "
             "are calls to the available MCP tools.\n"
@@ -522,9 +522,9 @@ def main(
             " when the solution is ready.\n"
             "\n"
             "# Interaction rules:\n"
-            "- Produce exactly ONE Python style code block per response.\n"
-            "- The code block must contain executable Python code"
-            " using Sandbox MCP functions.\n"
+            "- Produce exactly ONE Python style code block per response "
+            "to call Sandbox MCP functions "
+            "and nothing else!\n"
             "- Do not include explanations, introductions,"
             " Markdown lists, or reasoning.\n"
             "- Do not repeat previously executed operations"
@@ -1013,14 +1013,17 @@ def main(
                         if print_debug:
                             print("== sandbox call:")
                             print(code_txt)
-                            print("\n== end of call to sandbox")
+                            print("== end")
                         sandbox_input += code_txt + "\n"
                         result_ = sandbox.run_tool(code_txt)
                         tool_result = mpc_result_to_txt(result_.sandbox_output)
                         sandbox_output += str(tool_result) + "\n"
                         if print_debug:
-                            print("== result:", result_, "\n== end")
+                            print(f"== sandbox result (success:{result_.success}):")
+                            print(result_)
+                            print("== end")
                         llm_finish = False
+                        tool_call_error = 0
                         if result_.success:
                             if tool_result:
                                 messages.append({
@@ -1063,15 +1066,18 @@ def main(
                             if print_debug:
                                 print("== sandbox call:")
                                 print(code_txt)
-                                print("\n== end of call to sandbox")
+                                print("== end")
                             sandbox_input += code_txt + "\n"
                             result_ = sandbox.run_tool(code_txt)
                             tool_result = mpc_result_to_txt(
                                 result_.sandbox_output)
                             sandbox_output += str(tool_result) + "\n"
                             if print_debug:
-                                print("== result:", result_, "\n== end")
+                                print(f"== sandbox result (success:{result_.success}):")
+                                print(result_)
+                                print("== end")
                             llm_finish = False
+                            tool_call_error = 0
                             if result_.success:
                                 if tool_result:
                                     messages.append({
@@ -1096,7 +1102,7 @@ def main(
                                     "content": ("Sandbox call error:\n"
                                                 f"{tool_result}"),
                                 })
-                            break
+                            continue
                         # else:
                         #     # Perhaps an LLM does not call tools,
                         #     # but rather proposes solutions.
@@ -1117,8 +1123,8 @@ def main(
                         "content": ("No solution was provided, "
                                     "and no tool was called on "
                                     "the last step.\n"
-                                    "This is the end? "
-                                    "You can not solve this task?\n")
+                                    "This is the end? \n"
+                                    "Do not write explanation. You must work only calling avalible function in Python block example: ```python\nrun_tests()\n``` \n")
                      }))
             llm_finish = False
 
