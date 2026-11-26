@@ -135,7 +135,7 @@ class RepositoryCase(unittest.TestCase):
         (self.repo / "binary").write_bytes(b"\x00solve\xff\n")
         self.assertEqual(self.tools.search_code(
             r"^def\s+solve", "*.py", use_regex=True),
-                         f"{self.repo}/module.py:1 def solve(value):")
+            f"{self.repo}/module.py:1 def solve(value):")
         self.assertEqual(self.tools.search_code("absent"), "No matches.")
         (self.repo / "vector.py").write_text("total = sum([N.x, N.y])\n")
         self.assertIn(

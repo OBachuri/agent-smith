@@ -572,7 +572,7 @@ def main(
             and total_input_tokens < max_in_tokens
             and total_output_tokens < max_out_tokens
             and (int(time.perf_counter() - start_time) < max_time_s)
-            ):
+    ):
         llm_step_number += 1
         llm_finish = True
         llm_input_tokens = 0
@@ -721,10 +721,10 @@ def main(
                         messages.append(
                             cast(ChatCompletionMessageParam,
                                  {
-                                    "role": "tool",
-                                    "tool_call_id": call_id,
-                                    "content": ("Error: Tool (name="
-                                                f"{tool_name}) not found!")
+                                     "role": "tool",
+                                     "tool_call_id": call_id,
+                                     "content": ("Error: Tool (name="
+                                                 f"{tool_name}) not found!")
                                  }))
                         tool_call_error += 1
                         if tool_call_error < max_tool_retries:
@@ -754,7 +754,7 @@ def main(
                                             'as arguments "code" must be '
                                             'Python style call of function'
                                             f'from list: {sandbox_tools_list}"'
-                                            )
+                                        )
                                     }))
                             tool_call_error += 1
                             if tool_call_error < max_tool_retries:
@@ -777,7 +777,7 @@ def main(
                                             f'tool_name="{tool_name}",\n'
                                             'arguments="'
                                             f'{tool_call.function.arguments}"'
-                                            )
+                                        )
                                     }))
                             tool_call_error += 1
                             if tool_call_error < max_tool_retries:
@@ -799,9 +799,9 @@ def main(
                     messages.append(
                         cast(ChatCompletionMessageParam,
                              {
-                                "role": "tool",
-                                "tool_call_id": call_id,
-                                "content": tool_result
+                                 "role": "tool",
+                                 "tool_call_id": call_id,
+                                 "content": tool_result
                              }))
                     llm_finish = False
                     if print_debug:
@@ -858,10 +858,10 @@ def main(
                                 messages.append(
                                     cast(ChatCompletionMessageParam,
                                          {
-                                            "role": "user",
-                                            "content": (
-                                                "Error: Tool (name="
-                                                f"{tool_name}) not found!")
+                                             "role": "user",
+                                             "content": (
+                                                 "Error: Tool (name="
+                                                 f"{tool_name}) not found!")
                                          }))
                                 tool_call_error += 1
                                 if tool_call_error < max_tool_retries:
@@ -885,7 +885,7 @@ def main(
                                                         f'"{tool_name}",\n'
                                                         'arguments="'
                                                         f'{str(arg_json)}"'
-                                                        )
+                                                    )
                                                 }))
                                         tool_call_error += 1
                                         if tool_call_error < max_tool_retries:
@@ -917,7 +917,7 @@ def main(
                                                     'Python style call of '
                                                     'a function from list: '
                                                     f'{sandbox_tools_list}".'
-                                                    )
+                                                )
                                             }))
                                     tool_call_error += 1
                                     if tool_call_error < max_tool_retries:
@@ -938,10 +938,10 @@ def main(
                             messages.append(
                                 cast(ChatCompletionMessageParam,
                                      {
-                                        "role": "user",
-                                        "content": (
-                                            "Tool call result: "
-                                            f"{tool_result}")
+                                         "role": "user",
+                                         "content": (
+                                             "Tool call result: "
+                                             f"{tool_result}")
                                      }))
                             tool_call_error = 0
                             llm_finish = False
@@ -1113,12 +1113,12 @@ def main(
             messages.append(
                 cast(ChatCompletionMessageParam,
                      {
-                        "role": "user",
-                        "content": ("No solution was provided, "
-                                    "and no tool was called on "
-                                    "the last step.\n"
-                                    "This is the end? "
-                                    "You can not solve this task?\n")
+                         "role": "user",
+                         "content": ("No solution was provided, "
+                                     "and no tool was called on "
+                                     "the last step.\n"
+                                     "This is the end? "
+                                     "You can not solve this task?\n")
                      }))
             llm_finish = False
 
@@ -1128,10 +1128,10 @@ def main(
                 messages.append(
                     cast(ChatCompletionMessageParam,
                          {
-                            "role": "user",
-                            "content": ("The solution did not pass" +
-                                        "the final test:\n" +
-                                        str(test_).strip())
+                             "role": "user",
+                             "content": ("The solution did not pass" +
+                                         "the final test:\n" +
+                                         str(test_).strip())
                          }))
                 llm_finish = False
 
@@ -1148,7 +1148,7 @@ def main(
             sandbox_input=sandbox_input.strip(),
             sandbox_output=sandbox_output.strip(),
             retries=llm_retries
-            )
+        )
         steps.append(current_step)
         # print("==== ", current_step)
 
