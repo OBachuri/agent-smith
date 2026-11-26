@@ -133,7 +133,8 @@ class RepositoryCase(unittest.TestCase):
 
     def test_search_regex_globs_and_numbered_output(self) -> None:
         (self.repo / "binary").write_bytes(b"\x00solve\xff\n")
-        self.assertEqual(self.tools.search_code(r"^def\s+solve", "*.py"),
+        self.assertEqual(self.tools.search_code(
+            r"^def\s+solve", "*.py", use_regex=True),
                          f"{self.repo}/module.py:1 def solve(value):")
         self.assertEqual(self.tools.search_code("absent"), "No matches.")
         (self.repo / "vector.py").write_text("total = sum([N.x, N.y])\n")
@@ -142,11 +143,27 @@ class RepositoryCase(unittest.TestCase):
             self.tools.search_code("sum([N.x", "vector.py"),
         )
 
+    def test_blank_directory_lists_task_root(self) -> None:
+        for directory in ("", " ", "."):
+            self.assertEqual(self.tools.list_files(directory, "*.py"),
+                             self.tools.list_files(".", "*.py"))
+        with self.assertRaises(ToolError):
+            self.tools.read_file("")
+
+    def test_code_snippet_is_literal_by_default(self) -> None:
+        snippet = "sum([N.x, (0 * N.x)])"
+        (self.repo / "vector.py").write_text("answer = " + snippet + "\n")
+        (self.repo / "noise.py").write_text("sum = 1\nsum(child.time())\n")
+        self.assertEqual(self.tools.search_code(snippet),
+                         f"{self.repo}/vector.py:1 answer = {snippet}")
+        with self.assertRaisesRegex(ToolError, "Invalid regular expression"):
+            self.tools.search_code("[", use_regex=True)
+
     def test_expensive_regex_times_out(self) -> None:
         (self.repo / "long.txt").write_text("a" * 200000 + "!")
         self.tools.config.max_execution_time_seconds = 1
         with self.assertRaisesRegex(ToolError, "timed out"):
-            self.tools.search_code("(a+)+$", "long.txt")
+            self.tools.search_code("(a+)+$", "long.txt", use_regex=True)
 
     def test_globs_include_nested_files_and_one_star_depth(self) -> None:
         (self.repo / "pkg").mkdir()
@@ -174,11 +191,13 @@ class RepositoryCase(unittest.TestCase):
         self.assertEqual(listed("pkg/**/*.py"),
                          [str(self.repo / "pkg/sub/deep.py")])
 
-        found = self.tools.search_code(r"^def\s+solve", "*.py")
+        found = self.tools.search_code(r"^def\s+solve", "*.py", use_regex=True)
         self.assertIn("module.py", found)
         self.assertIn("pkg/sub/deep.py", found)
         self.assertNotIn("notes.txt", found)
-        shallow = self.tools.search_code(r"^def\s+solve", "pkg/*.py")
+        shallow = self.tools.search_code(
+            r"^def\s+solve", "pkg/*.py", use_regex=True,
+        )
         self.assertIn("pkg/extra.py", shallow)
         self.assertNotIn("deep.py", shallow)
         self.assertNotIn("module.py", shallow)
@@ -336,14 +355,23 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             prompt = rendered.messages[0].content
             assert isinstance(prompt, TextContent)
             self.assertIn("get_patch", prompt.text)
-            (self.root / "vector.py").write_text("total = sum([N.x, N.y])\n")
+            snippet = "sum([N.x, (0 * N.x)])"
+            (self.root / "vector.py").write_text("total = " + snippet + "\n")
+            (self.root / "noise.py").write_text("sum = 1\n")
             found = await client.call_tool(
-                "search_code", {"pattern": "sum([N.x"},
+                "search_code", {"pattern": snippet},
             )
             self.assertFalse(found.is_error)
             found_text = found.content[0]
             assert isinstance(found_text, TextContent)
             self.assertIn("sum([N.x", found_text.text)
+            self.assertNotIn("noise.py", found_text.text)
+            regex_result = await client.call_tool(
+                "search_code", {"pattern": "^sum =", "use_regex": True},
+            )
+            regex_text = regex_result.content[0]
+            assert isinstance(regex_text, TextContent)
+            self.assertIn("noise.py:1 sum = 1", regex_text.text)
             blank = await client.call_tool(
                 "start_task",
                 {"docker_image": " ", "eval_script": "echo ok"},
@@ -367,13 +395,13 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(set(schema["required"]),
                              {"name", "filepath", "line"})
             for name, arguments, expected in (
-                ("list_files", {"directory": ".", "pattern": "*.py"},
+                ("list_files", {"directory": "", "pattern": "*.py"},
                  str(self.root / "module.py")),
                 ("read_file", {"filepath": "module.py", "start_line": 1,
                                "end_line": 1}, "1: def solve(value):"),
                 ("edit_file", {"filepath": "module.py", "old_str": "value + 1",
                                "new_str": "value + 2"}, "Replaced one"),
-                ("search_code", {"pattern": "value \\+ 2"}, "module.py:2"),
+                ("search_code", {"pattern": "value + 2"}, "module.py:2"),
                 ("search_function_or_class_definition_in_code",
                  {"name": "Worker"}, "module.py:4 class Worker:"),
                 ("find_references", {"name": "solve", "filepath": "module.py",

@@ -14,6 +14,11 @@ eval script, so it reports that no task has been started.
 Read `docker_image` and `eval_script` from the task JSON, then call
 `start_task(docker_image, eval_script)` through the connected MCP client.
 It closes any current container and starts a new one from those two fields.
+Missing images are pulled before startup; the agent allows 660 seconds for
+this first call. Sandbox replies are read as complete JSON lines.
+
+`list_files(directory="")` lists the task root. `search_code` searches literal
+text by default; use `use_regex=True` explicitly for regular expressions.
 
 Inside the container the repository stays at `/testbed`, with no network and a
 128-process limit. `run_tests` runs `eval_script` in a disposable copy and
