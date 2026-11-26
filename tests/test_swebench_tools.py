@@ -517,8 +517,14 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                 return command
 
         with patch("mcp_tools_swebench.DockerSession", FakeSession):
-            await owner.start_task("img:latest", "echo ok")
-            await owner.start_task("other:latest", "echo ok")
+            await owner.start_task_not_a_tool_for_manual(
+                "img:latest",
+                "echo ok"
+            )
+            await owner.start_task_not_a_tool_for_manual(
+                "other:latest",
+                "echo ok"
+            )
         self.assertTrue(created[0].closed)
         self.assertFalse(created[1].closed)
         self.assertIs(owner.session, created[1])
@@ -532,7 +538,10 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
 
         with patch("mcp_tools_swebench.DockerSession", fail_once):
             with self.assertRaises(ToolError):
-                await owner.start_task("missing", "echo ok")
+                await owner.start_task_not_a_tool_for_manual(
+                    "missing",
+                    "echo ok"
+                )
         self.assertTrue(created[1].closed)
         self.assertTrue(created[-1].closed)
         self.assertIsNone(owner.session)
@@ -572,11 +581,17 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                 return "done"
 
         with patch("mcp_tools_swebench.DockerSession", WaitingSession):
-            await owner.start_task("img:latest", "echo ok")
+            await owner.start_task_not_a_tool_for_manual(
+                "img:latest",
+                "echo ok"
+            )
             running = asyncio.create_task(owner.run_command("echo"))
             await entered.wait()
             swap = asyncio.create_task(
-                owner.start_task("other:latest", "echo ok"),
+                owner.start_task_not_a_tool_for_manual(
+                    "other:latest",
+                    "echo ok"
+                ),
             )
             with self.assertRaises(asyncio.TimeoutError):
                 await asyncio.wait_for(asyncio.shield(swap), 0.05)
