@@ -91,7 +91,7 @@ class SandboxClient:
     def run_tool(
             self,
             tool_with_param: str,
-            max_sec: float = 2) -> SandboxIntermediateResult:
+            max_sec: float = 12) -> SandboxIntermediateResult:
         self.write_std(f"{tool_with_param.strip()}\n<<<END_COMMAND>>>\n")
         deadline = monotonic() + max_sec
         assert self.process.stdout is not None

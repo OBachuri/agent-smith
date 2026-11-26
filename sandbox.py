@@ -23,6 +23,7 @@ from src.config_model import SandboxConfig, SandboxIntermediateResult
 SANDBOX_TEMPLATE_PATH = "src/sandbox_template.json"
 COMMAND_END_MARKER = "<<<END_COMMAND>>>"
 EXIT_COMMANDS = {"exit", "exit()"}
+RESERVED_TOOL = "start_task_not_a_tool_for_manual"
 
 
 # Init Typer app
@@ -112,11 +113,12 @@ def manual(
 
     if aliases:
         for python_name, original_name in aliases.items():
-            lines.append(
-                schema_to_signature(
-                    registry[original_name], python_name
+            if original_name != RESERVED_TOOL:
+                lines.append(
+                    schema_to_signature(
+                        registry[original_name], python_name
+                    )
                 )
-            )
 
     return "\n".join(lines)
 
@@ -363,10 +365,7 @@ class Sandbox:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             start_new_session=(os.name == "posix"),
-            env={
-                "PATH": "/usr/bin:/bin",
-                "LANG": "C.UTF-8"
-            }
+            env=os.environ.copy()
         )
 
         try:
