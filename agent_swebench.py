@@ -1121,16 +1121,16 @@ def main(
             messages.append(
                 cast(ChatCompletionMessageParam,
                      {
-                        "role": "user",
-                        "content": ("No solution was provided, "
-                                    "and no tool was called on "
-                                    "the last step.\n"
-                                    "This is the end? \n"
-                                    "Do not write explanation. "
-                                    "You must work only calling "
-                                    "avalible function in Python "
-                                    "block. \nExample: "
-                                    "```python\nrun_tests()\n``` \n")
+                         "role": "user",
+                         "content": ("No solution was provided, "
+                                     "and no tool was called on "
+                                     "the last step.\n"
+                                     "This is the end? \n"
+                                     "Do not write explanation. "
+                                     "You must work only calling "
+                                     "avalible function in Python "
+                                     "block. \nExample: "
+                                     "```python\nrun_tests()\n``` \n")
                      }))
             llm_finish = False
 
