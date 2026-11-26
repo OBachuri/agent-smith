@@ -1019,7 +1019,8 @@ def main(
                         tool_result = mpc_result_to_txt(result_.sandbox_output)
                         sandbox_output += str(tool_result) + "\n"
                         if print_debug:
-                            print(f"== sandbox result (success:{result_.success}):")
+                            print("== sandbox result (success:",
+                                  result_.success, "):")
                             print(result_)
                             print("== end")
                         llm_finish = False
@@ -1073,7 +1074,8 @@ def main(
                                 result_.sandbox_output)
                             sandbox_output += str(tool_result) + "\n"
                             if print_debug:
-                                print(f"== sandbox result (success:{result_.success}):")
+                                print("== sandbox result (success:",
+                                      result_.success, "):")
                                 print(result_)
                                 print("== end")
                             llm_finish = False
@@ -1124,7 +1126,11 @@ def main(
                                     "and no tool was called on "
                                     "the last step.\n"
                                     "This is the end? \n"
-                                    "Do not write explanation. You must work only calling avalible function in Python block example: ```python\nrun_tests()\n``` \n")
+                                    "Do not write explanation. "
+                                    "You must work only calling "
+                                    "avalible function in Python "
+                                    "block example: "
+                                    "```python\nrun_tests()\n``` \n")
                      }))
             llm_finish = False
 
