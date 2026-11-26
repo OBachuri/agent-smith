@@ -25,6 +25,7 @@ class SandboxClient:
             # In this mode i can't read more then 1 char without bloking
             # text=True,
             bufsize=0,
+            env=os.environ.copy(),
         )
 
         self._ids = count(1)
@@ -91,7 +92,7 @@ class SandboxClient:
     def run_tool(
             self,
             tool_with_param: str,
-            max_sec: float = 12) -> SandboxIntermediateResult:
+            max_sec: float = 15) -> SandboxIntermediateResult:
         self.write_std(f"{tool_with_param.strip()}\n<<<END_COMMAND>>>\n")
         deadline = monotonic() + max_sec
         assert self.process.stdout is not None
@@ -144,3 +145,48 @@ class SandboxClient:
         if self.process.stdout:
             self.process.stdout.close()
         self.sel.close()
+
+    def health_check(self) -> bool:
+        """
+        Check if the sandbox subprocess is alive and ready to accept commands.
+
+        Args:
+            active: If True, sends `ping_cmd`
+            and verifies a valid JSON response.
+            ping_cmd: A lightweight, side-effect-free
+            sandbox command for active checks.
+            max_sec: Timeout for the active check.
+        """
+        # 1. Process must still be running (poll() returns None while active)
+        if self.process is None or self.process.poll() is not None:
+            return False
+
+        # 2. Pipes and selector must be open
+        if (
+            self.process.stdin is None
+            or self.process.stdin.closed
+            or self.process.stdout is None
+            or self.process.stdout.closed
+            or self.sel.get_map() == {}
+        ):
+            return False
+
+        # # 3. Drain any unexpected/stale bytes before checking
+        # if self.sel.select(timeout=0):
+        #     try:
+        #         stale = self.process.stdout.read(4096)
+        #         if not stale:  # EOF reached -> process stdout closed
+        #             return False
+        #         self._response_buffer += stale
+        #     except (BlockingIOError, TypeError):
+        #         pass
+
+        # # 4. Optional active round-trip check
+        # if active:
+        #     try:
+        #         res = self.run_tool(ping_cmd, max_sec=max_sec)
+        #         return res.success
+        #     except Exception:
+        #         return False
+
+        return True
