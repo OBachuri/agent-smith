@@ -356,10 +356,21 @@ def main(
 
     typer.echo(f" Task id: {the_task.instance_id}")
     typer.echo(f" Docker: {the_task.docker_image}")
+    print("-"*10)
+
+    if "TESTBED_PATH" not in os.environ:
+        os.environ["TESTBED_PATH"] = "/testbed"
+    testbed_path = str(os.environ["TESTBED_PATH"])
 
     # Connect to sandbox
+    sandbox_run_param = ' --mcp-stdio "uv run mcp_tools_swebench.py"'
+    if print_debug:
+        print("Sandbox run command:")
+        print(" uv run sandbox " + sandbox_run_param)
+        print(f" TESTBED_PATH={testbed_path}")
+
     try:
-        sandbox = SandboxClient('--mcp-stdio "uv run mcp_tools_swebench.py"')
+        sandbox = SandboxClient(sandbox_run_param)
         sandbox.read_std(5)  # clear stdout from sandbox
         sandbox_manual = sandbox.request("manual()", 5)
     except Exception as ex:
@@ -395,21 +406,24 @@ def main(
         print("-"*10, " Sandbox tools:\n", sandbox_tools_list, "\n")
 
     # Start Docker !!!!!!!
-    if "start_task" not in sandbox_tools_list:
+    if "start_task_not_a_tool_for_manual" not in sandbox_tools_list:
         typer.secho(
-            "Error: Can`t work without start_task() tools'!\n",
+            "Error: Can`t work without "
+            "start_task_not_a_tool_for_manual() tools'!\n",
             fg=typer.colors.RED, err=True)
         sandbox.close()
         typer.Exit(code=1)
         return
 
     try:
-        start_res = sandbox.run_tool(
-            "print(start_task("
-            f"docker_image={repr(the_task.docker_image)}, "
-            f"eval_script={repr(the_task.eval_script)}"
-            "))",
-            660)
+        str_ = ("start_task_not_a_tool_for_manual("
+                f"docker_image={repr(the_task.docker_image)}, "
+                f"eval_script={repr(the_task.eval_script)}"
+                ")")
+        if print_debug:
+            print(str_)
+        start_res = sandbox.run_tool(str_, 660)
+
     except Exception as ex:
         typer.secho(
             "Error: MCP server can't start docker image "
@@ -572,6 +586,7 @@ def main(
             and total_input_tokens < max_in_tokens
             and total_output_tokens < max_out_tokens
             and (int(time.perf_counter() - start_time) < max_time_s)
+            and sandbox.health_check()
     ):
         llm_step_number += 1
         llm_finish = True
@@ -792,7 +807,18 @@ def main(
                     tool_call_error = 0
                     sandbox_input += sb_call + "\n"
                     # print("=====", sandbox_input)
-                    result_ = sandbox.run_tool(sb_call)
+                    try:
+                        result_ = sandbox.run_tool(sb_call)
+                    except Exception as ex:
+                        error_ = (f"Sandbox call Error: {str(ex)} \n"
+                                  f"The call:\n{sb_call}")
+                        error_txt += error_
+                        typer.secho(error_,
+                                    fg=typer.colors.RED, err=True)
+                        tool_call_error += 1
+                        llm_finish = False
+                        break
+
                     # print("-===:sandbox return:", result_)
                     tool_result = mpc_result_to_txt(result_.sandbox_output)
                     sandbox_output += str(tool_result) + "\n"
@@ -930,7 +956,18 @@ def main(
                                 print(" - call:", sb_call)
                             sandbox_input += sb_call + "\n"
                             # print("=====", sandbox_input)
-                            result_ = sandbox.run_tool(sb_call)
+                            try:
+                                result_ = sandbox.run_tool(sb_call)
+                            except Exception as ex:
+                                error_ = (f"Sandbox call Error: {str(ex)} \n"
+                                          f"The call:\n{sb_call}")
+                                error_txt += error_
+                                typer.secho(error_,
+                                            fg=typer.colors.RED, err=True)
+                                tool_call_error += 1
+                                llm_finish = False
+                                break
+
                             # print("-===:sandbox return:", result_)
                             tool_result = mpc_result_to_txt(
                                 result_.sandbox_output)
@@ -1015,7 +1052,18 @@ def main(
                             print(code_txt)
                             print("== end")
                         sandbox_input += code_txt + "\n"
-                        result_ = sandbox.run_tool(code_txt)
+                        try:
+                            result_ = sandbox.run_tool(code_txt)
+                        except Exception as ex:
+                            error_ = (f"Sandbox call Error: {str(ex)} \n"
+                                      f"The call:\n{code_txt}")
+                            error_txt += error_
+                            typer.secho(error_,
+                                        fg=typer.colors.RED, err=True)
+                            tool_call_error += 1
+                            llm_finish = False
+                            break
+
                         tool_result = mpc_result_to_txt(result_.sandbox_output)
                         sandbox_output += str(tool_result) + "\n"
                         if print_debug:
@@ -1069,7 +1117,18 @@ def main(
                                 print(code_txt)
                                 print("== end")
                             sandbox_input += code_txt + "\n"
-                            result_ = sandbox.run_tool(code_txt)
+                            try:
+                                result_ = sandbox.run_tool(code_txt)
+                            except Exception as ex:
+                                error_ = (f"Sandbox call Error: {str(ex)} \n"
+                                          f"The call:\n{code_txt}")
+                                error_txt += error_
+                                typer.secho(error_,
+                                            fg=typer.colors.RED, err=True)
+                                tool_call_error += 1
+                                llm_finish = False
+                                break
+
                             tool_result = mpc_result_to_txt(
                                 result_.sandbox_output)
                             sandbox_output += str(tool_result) + "\n"

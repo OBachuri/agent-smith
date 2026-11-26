@@ -168,7 +168,8 @@ def main(
 
     def final_chek(f_str: str) -> str:
         nonlocal final_test
-        if "run_tests" not in sandbox_tools_list:
+        if (("run_tests" not in sandbox_tools_list
+             or not sandbox.health_check())):
             #  can`t check solution without this tool
             return ""
         sb_call = (
@@ -447,6 +448,7 @@ def main(
             and total_input_tokens < max_in_tokens
             and total_output_tokens < max_out_tokens
             and (int(time.perf_counter() - start_time) < max_time_s)
+            and sandbox.health_check()
             ):
         llm_step_number += 1
         llm_finish = True
@@ -997,7 +999,7 @@ def main(
                      }))
             llm_finish = False
 
-        if solution and llm_finish:
+        if solution and llm_finish and sandbox.health_check():
             test_ = final_chek(solution)
             if test_:   # something wrong
                 messages.append(
@@ -1028,7 +1030,7 @@ def main(
         # print("==== ", current_step)
 
     # The last try to find solution in the last LLM response
-    if (not solution) and python_text:
+    if (not solution) and python_text and sandbox.health_check():
         code_txt = "\n".join(python_text)
         txt_code_solution = extract_function_code(
             code_txt,
