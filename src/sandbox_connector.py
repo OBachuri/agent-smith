@@ -2,10 +2,11 @@ import subprocess
 import os
 import selectors
 from itertools import count
-from time import sleep
+from time import monotonic
 import shlex
 
 from src.config_model import SandboxIntermediateResult
+from pydantic import ValidationError
 
 
 class SandboxClient:
@@ -27,6 +28,7 @@ class SandboxClient:
         )
 
         self._ids = count(1)
+        self._response_buffer = b""
 
         if not self.process:
             return
@@ -42,6 +44,8 @@ class SandboxClient:
         self.sel.register(self.process.stdout, selectors.EVENT_READ)
 
     def write_std(self, text: str) -> None:
+        if self.process.stdin is None or self.process.stdin.closed:
+            raise RuntimeError("Sandbox session closed; start a new client.")
         if self.process.stdin:
             self.process.stdin.write(text.encode("utf-8"))
             self.process.stdin.flush()
@@ -88,28 +92,48 @@ class SandboxClient:
             self,
             tool_with_param: str,
             max_sec: float = 2) -> SandboxIntermediateResult:
-        json_str = self.request(tool_with_param, max_sec=max_sec)
-        # print("json_str:", json_str)
+        self.write_std(f"{tool_with_param.strip()}\n<<<END_COMMAND>>>\n")
+        deadline = monotonic() + max_sec
+        assert self.process.stdout is not None
+        while b"\n" not in self._response_buffer:
+            remaining = deadline - monotonic()
+            if remaining <= 0 or not self.sel.select(timeout=remaining):
+                self.close()
+                return SandboxIntermediateResult(
+                    success=False, tool_name="sandbox", status="timeout",
+                    sandbox_output=(f"Sandbox response timed out after "
+                                    f"{max_sec:g}s. Session closed; restart "
+                                    "before retrying the command."),
+                )
+            chunk = self.process.stdout.read(4096)
+            if not chunk:
+                self.close()
+                return SandboxIntermediateResult(
+                    success=False, tool_name="sandbox", status="error",
+                    sandbox_output="Sandbox stdout closed before a response.",
+                )
+            self._response_buffer += chunk
+        raw, self._response_buffer = self._response_buffer.split(b"\n", 1)
         try:
-            res_ = SandboxIntermediateResult.model_validate_json(json_str)
-        except Exception as ex:
+            res_ = SandboxIntermediateResult.model_validate_json(raw)
+        except ValidationError as ex:
             res_ = SandboxIntermediateResult(
                 success=False,
-                tool_name="sanbox",
-                sandbox_output=(f"Error: {ex}\n"
-                                f"Source: {json_str}"))
+                tool_name="sandbox", status="error",
+                sandbox_output=f"Invalid sandbox response: {ex}")
         return res_
 
     def close(self) -> None:
-        if self.process.stdin:
+        if self.process.stdin and not self.process.stdin.closed:
             try:
-                self.process.stdin.write(b"exit()\n")
+                self.process.stdin.write(b"exit()\n<<<END_COMMAND>>>\n")
                 self.process.stdin.flush()
-                sleep(1)
                 self.process.stdin.close()
                 self.process.wait(timeout=2)
-            except Exception:
+            except (OSError, subprocess.TimeoutExpired):
                 pass
+            finally:
+                self.process.stdin.close()
 
         self.process.terminate()  # Ask nicely to stop
         try:
@@ -117,3 +141,6 @@ class SandboxClient:
         except subprocess.TimeoutExpired:
             self.process.kill()  # Forcefully kill it if it takes too long
             self.process.wait()  # Clean up the dead process completely
+        if self.process.stdout:
+            self.process.stdout.close()
+        self.sel.close()

@@ -229,17 +229,22 @@ class RepositoryTools:
     def list_files(self, directory: str = ".", pattern: str = "*") -> str:
         return self._render(
             (str((self.visible_root or self.root) / path)
-             for path in self._files(directory, pattern)),
+             for path in self._files(directory if directory.strip() else ".",
+                                     pattern)),
             "No matching files.",
         )
 
-    def search_code(self, pattern: str, file_pattern: str = "*") -> str:
+    def search_code(
+        self, pattern: str, file_pattern: str = "*", use_regex: bool = False,
+    ) -> str:
         if not pattern:
             raise self._error("Search pattern must not be empty.")
         try:
-            expression = regex.compile(pattern)
-        except regex.error:
-            expression = regex.compile(regex.escape(pattern))
+            expression = regex.compile(
+                pattern if use_regex else regex.escape(pattern),
+            )
+        except regex.error as error:
+            raise self._error(f"Invalid regular expression: {error}") from None
         deadline = time.monotonic() + self.config.max_execution_time_seconds
 
         try:

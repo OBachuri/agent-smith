@@ -30,7 +30,7 @@ class SWEBenchMCP:
             (self.edit_file, "Replace exactly one text match."),
             (self.list_files, "Recursively list matching files."),
             (self.search_code,
-             "Find regex matches. Invalid patterns are searched as text."),
+             "Find literal text and locations. Set use_regex=True for regex."),
             (
                 self.search_function_or_class_definition_in_code,
                 "Find exact Python function and class definitions.",
@@ -120,9 +120,11 @@ class SWEBenchMCP:
     ) -> str:
         return await self.call_repository("list_files", directory, pattern)
 
-    async def search_code(self, pattern: str, file_pattern: str = "*") -> str:
+    async def search_code(
+        self, pattern: str, file_pattern: str = "*", use_regex: bool = False,
+    ) -> str:
         return await self.call_repository(
-            "search_code", pattern, file_pattern,
+            "search_code", pattern, file_pattern, use_regex,
         )
 
     async def search_function_or_class_definition_in_code(
