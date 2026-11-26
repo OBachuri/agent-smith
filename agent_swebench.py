@@ -407,9 +407,9 @@ def main(
         start_res = sandbox.run_tool(
             "print(start_task("
             f"docker_image={repr(the_task.docker_image)}, "
-            f"eval_script={repr(the_task.docker_image)}"
+            f"eval_script={repr(the_task.eval_script)}"
             "))",
-            10)
+            660)
     except Exception as ex:
         typer.secho(
             "Error: MCP server can't start docker image "
