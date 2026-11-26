@@ -219,7 +219,11 @@ class SWEBenchMCP:
             )
         return result.stdout
 
-    async def start_task_not_a_tool_for_manual(self, docker_image: str, eval_script: str) -> str:
+    async def start_task_not_a_tool_for_manual(
+            self,
+            docker_image: str,
+            eval_script: str
+    ) -> str:
         if not docker_image.strip() or "\x00" in docker_image:
             raise self.repository._error(
                 "docker_image must be a non-empty image name.")
